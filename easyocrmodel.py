@@ -339,4 +339,5 @@ if __name__ == "__main__":
 
     # Print structured output
     pretty_print_structured(result)
+    print("Done.")
 
