@@ -339,5 +339,5 @@ if __name__ == "__main__":
 
     # Print structured output
     pretty_print_structured(result)
-    print("Done.")
+    print("OCR Average Confidence:", result.get("ocr_avg_confidence", 0.0))
 
