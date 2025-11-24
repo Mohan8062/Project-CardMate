@@ -329,7 +329,7 @@ def pretty_print_structured(s):
 # ---------------------------
 if __name__ == "__main__":
     # 🔥 Give your business card image path here
-    image_path = r"C:\Users\mohanraj\OneDrive\Desktop\finalyr project\WhatsApp Image 2025-08-27 at 19.41.36_28e3dd69.jpg"# <<-- change this
+    image_path = r"C:\Users\mohanraj\OneDrive\Desktop\finalyr project\Screenshot 2025-08-27 181927.png" # <<-- change this
 
     # 🔥 Enable/disable visualization
     visualize = True
