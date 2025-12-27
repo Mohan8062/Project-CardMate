@@ -9,8 +9,14 @@ from sqlmodel import select
 from .database import get_session
 from .models import User
 
-# Configuration - In a real app, move these to environment variables
-SECRET_KEY = "your-very-secret-key-for-cardmate-app"
+import os
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
+
+# Configuration
+SECRET_KEY = os.getenv("AUTH_SECRET_KEY", "fallback-secret-key-for-dev-only")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7  # 7 days
 
