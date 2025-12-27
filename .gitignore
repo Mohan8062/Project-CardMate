@@ -1,0 +1,30 @@
+# Environment Variables
+.env
+backend/.env
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+env/
+venv/
+ENV/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temp Files
+temp_*
+*.log
+
+# Frontend (Expo/React Native)
+node_modules/
+.expo/
+dist/
+web-build/
+*.jks
+*.p12
+*.key
+*.mobileprovision
