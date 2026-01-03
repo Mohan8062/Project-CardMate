@@ -1,8 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { StyleSheet, View, StatusBar, ActivityIndicator } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { getCurrentUser } from './services/api';
 import CardPicker from './components/CardPicker';
 import AuthScreen from './components/AuthScreen';
+import { THEME } from './theme';
 
 export default function App() {
   const [user, setUser] = useState(null);
@@ -15,12 +17,23 @@ export default function App() {
   const checkLoggedIn = async () => {
     try {
       const token = await AsyncStorage.getItem('userToken');
-      const userData = await AsyncStorage.getItem('userData');
-      if (token && userData) {
-        setUser(JSON.parse(userData));
+      const userDataStr = await AsyncStorage.getItem('userData');
+
+      if (token && userDataStr) {
+        // Optional: Verify token with backend to ensure it's still valid
+        const validUser = await getCurrentUser();
+        if (validUser) {
+          setUser(JSON.parse(userDataStr));
+        } else {
+          // Token invalid or session expired
+          await AsyncStorage.removeItem('userToken');
+          await AsyncStorage.removeItem('userData');
+          setUser(null);
+        }
       }
     } catch (e) {
       console.warn("Auth check failed", e);
+      setUser(null);
     } finally {
       setCheckingAuth(false);
     }
@@ -48,7 +61,7 @@ export default function App() {
     <View style={styles.container}>
       <StatusBar barStyle="light-content" />
       {user ? (
-        <CardPicker />
+        <CardPicker user={user} onLogout={handleLogout} />
       ) : (
         <AuthScreen onLoginSuccess={handleLoginSuccess} />
       )}
@@ -59,12 +72,12 @@ export default function App() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F8FAFC',
+    backgroundColor: THEME.light.bg,
   },
   loadingContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#F8FAFC'
+    backgroundColor: THEME.light.bg
   }
 });

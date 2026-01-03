@@ -1,4 +1,4 @@
-from fastapi import FastAPI, UploadFile, File, Depends, HTTPException, status
+from fastapi import FastAPI, UploadFile, File, Form, Depends, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from sqlmodel import Session, select
 import os
@@ -6,6 +6,7 @@ import uuid
 import sys
 from datetime import datetime
 from pydantic import BaseModel
+from typing import Optional, List
 
 # Add the project root to sys.path so we can import ml_ocr
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -73,6 +74,18 @@ def login(login_data: UserLogin, session: Session = Depends(get_session)):
     token = create_access_token(data={"sub": user.email})
     return {"access_token": token, "token_type": "bearer", "user": {"username": user.username, "email": user.email}}
 
+@app.delete("/users/me")
+def delete_account(session: Session = Depends(get_session), current_user: User = Depends(get_current_user)):
+    # Delete all associated cards first
+    cards = session.exec(select(BusinessCard).where(BusinessCard.user_id == current_user.id)).all()
+    for card in cards:
+        session.delete(card)
+    
+    # Delete the user
+    session.delete(current_user)
+    session.commit()
+    return {"message": "Account and all associated data deleted successfully"}
+
 # --- Business Card Endpoints ---
 
 @app.get("/")
@@ -82,6 +95,10 @@ def read_root():
 @app.post("/scan")
 async def scan_card(
     file: UploadFile = File(...), 
+    event_name: Optional[str] = Form(None),
+    location_lat: Optional[float] = Form(None),
+    location_lng: Optional[float] = Form(None),
+    location_name: Optional[str] = Form(None),
     session: Session = Depends(get_session),
     current_user: User = Depends(get_current_user)
 ):
@@ -93,6 +110,26 @@ async def scan_card(
         # Call the existing ML logic
         result = extract_structured_from_image(temp_path)
         
+        # Auto-Tagging Logic
+        tags = []
+        designation = (result.get("designation") or "").lower()
+        company = (result.get("company") or "").lower()
+        
+        if any(x in designation for x in ["engineer", "developer", "architect", "cto", "tech"]):
+            tags.append("Tech")
+        if any(x in designation for x in ["ceo", "founder", "director", "president", "vp", "chief"]):
+            tags.append("Executive")
+        if any(x in designation for x in ["sales", "account", "business development", "rep"]):
+            tags.append("Sales")
+        if any(x in designation for x in ["marketing", "brand", "cmo"]):
+            tags.append("Marketing")
+        if any(x in designation for x in ["product", "manager"]):
+            tags.append("Product")
+        if any(x in designation for x in ["designer", "creative", "art", "ui", "ux"]):
+            tags.append("Design")
+        if "investor" in designation or "capital" in company:
+            tags.append("Investor")
+            
         # Create and save BusinessCard associated with current user
         import json
         card = BusinessCard(
@@ -104,7 +141,13 @@ async def scan_card(
             addresses=json.dumps(result.get("addresses", [])),
             websites=json.dumps(result.get("websites", [])),
             ocr_avg_confidence=result.get("ocr_avg_confidence", 0.0),
-            user_id=current_user.id
+            user_id=current_user.id,
+            # New Features
+            tags=json.dumps(tags),
+            event_name=event_name,
+            location_lat=location_lat,
+            location_lng=location_lng,
+            location_name=location_name
         )
         
         session.add(card)
@@ -125,9 +168,23 @@ def get_all_cards(
     session: Session = Depends(get_session),
     current_user: User = Depends(get_current_user)
 ):
-    # Only return cards belonging to the logged-in user
-    cards = session.exec(select(BusinessCard).where(BusinessCard.user_id == current_user.id)).all()
+    # Return cards sorted by newest first
+    cards = session.exec(select(BusinessCard).where(BusinessCard.user_id == current_user.id).order_by(BusinessCard.created_at.desc())).all()
     return cards
+
+# --- New Feature Endpoints ---
+
+class CardUpdate(BaseModel):
+    name: Optional[str] = None
+    designation: Optional[str] = None
+    company: Optional[str] = None
+    phones: Optional[str] = None
+    emails: Optional[str] = None
+    addresses: Optional[str] = None
+    websites: Optional[str] = None
+    notes: Optional[str] = None
+    tags: Optional[str] = None
+    event_name: Optional[str] = None
 
 @app.delete("/cards/{card_id}")
 def delete_card(
@@ -188,6 +245,130 @@ def clear_all_cards(
         session.delete(card)
     session.commit()
     return {"message": "All your cards cleared successfully"}
+
+# --- New Feature Endpoints ---
+
+class CardUpdate(BaseModel):
+    name: Optional[str] = None
+    designation: Optional[str] = None
+    company: Optional[str] = None
+    phones: Optional[str] = None
+    emails: Optional[str] = None
+    addresses: Optional[str] = None
+    websites: Optional[str] = None
+    notes: Optional[str] = None
+
+@app.put("/cards/{card_id}")
+def update_card(
+    card_id: int,
+    card_data: CardUpdate,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user)
+):
+    card = session.exec(select(BusinessCard).where(
+        BusinessCard.id == card_id,
+        BusinessCard.user_id == current_user.id
+    )).first()
+    
+    if not card:
+        raise HTTPException(status_code=404, detail="Card not found")
+    
+    # Update only provided fields
+    if card_data.name is not None: card.name = card_data.name
+    if card_data.designation is not None: card.designation = card_data.designation
+    if card_data.company is not None: card.company = card_data.company
+    if card_data.phones is not None: card.phones = card_data.phones
+    if card_data.emails is not None: card.emails = card_data.emails
+    if card_data.addresses is not None: card.addresses = card_data.addresses
+    if card_data.websites is not None: card.websites = card_data.websites
+    if card_data.notes is not None: card.notes = card_data.notes
+    if card_data.tags is not None: card.tags = card_data.tags
+    if card_data.event_name is not None: card.event_name = card_data.event_name
+    
+    session.add(card)
+    session.commit()
+    session.refresh(card)
+    return {"message": "Card updated", "data": card}
+
+@app.post("/cards/{card_id}/favorite")
+def toggle_favorite(
+    card_id: int,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user)
+):
+    card = session.exec(select(BusinessCard).where(
+        BusinessCard.id == card_id,
+        BusinessCard.user_id == current_user.id
+    )).first()
+    
+    if not card:
+        raise HTTPException(status_code=404, detail="Card not found")
+    
+    card.is_favorite = not card.is_favorite
+    session.add(card)
+    session.commit()
+    return {"message": "Favorite toggled", "is_favorite": card.is_favorite}
+
+@app.get("/cards/{card_id}/vcard")
+def export_vcard(
+    card_id: int,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user)
+):
+    card = session.exec(select(BusinessCard).where(
+        BusinessCard.id == card_id,
+        BusinessCard.user_id == current_user.id
+    )).first()
+    
+    if not card:
+        raise HTTPException(status_code=404, detail="Card not found")
+    
+    import json
+    phones = json.loads(card.phones) if card.phones else []
+    emails = json.loads(card.emails) if card.emails else []
+    
+    vcard = f"""BEGIN:VCARD
+VERSION:3.0
+FN:{card.name}
+ORG:{card.company or ''}
+TITLE:{card.designation or ''}
+"""
+    for phone in phones:
+        vcard += f"TEL:{phone}\n"
+    for email in emails:
+        vcard += f"EMAIL:{email}\n"
+    if card.notes:
+        vcard += f"NOTE:{card.notes}\n"
+    vcard += "END:VCARD"
+    
+    from fastapi.responses import PlainTextResponse
+    return PlainTextResponse(content=vcard, media_type="text/vcard", 
+                            headers={"Content-Disposition": f"attachment; filename={card.name}.vcf"})
+
+class UserSettings(BaseModel):
+    dark_mode: Optional[bool] = None
+
+@app.put("/users/me/settings")
+def update_settings(
+    settings: UserSettings,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user)
+):
+    if settings.dark_mode is not None:
+        current_user.dark_mode = settings.dark_mode
+    session.add(current_user)
+    session.commit()
+    return {"message": "Settings updated", "dark_mode": current_user.dark_mode}
+
+@app.get("/users/me")
+def get_current_user_info(current_user: User = Depends(get_current_user)):
+    return {
+        "id": current_user.id,
+        "username": current_user.username,
+        "email": current_user.email,
+        "dark_mode": current_user.dark_mode
+    }
+
 
 if __name__ == "__main__":
     import uvicorn

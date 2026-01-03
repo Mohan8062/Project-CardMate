@@ -3,7 +3,10 @@ import axios from "axios";
 import { Platform } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
-const BASE_URL = "http://10.167.25.86:8000";
+// Use localhost for web browser, network IP for mobile devices
+const BASE_URL = Platform.OS === "web"
+  ? "http://localhost:8000"
+  : "http://10.167.25.86:8000";
 
 // --- Authentication Functions ---
 
@@ -56,6 +59,21 @@ export const logoutUser = async () => {
   await AsyncStorage.removeItem("userData");
 };
 
+/**
+ * Delete User Account
+ */
+export const deleteAccount = async () => {
+  try {
+    const headers = await getAuthHeaders();
+    await axios.delete(`${BASE_URL}/users/me`, { headers });
+    await logoutUser();
+    return true;
+  } catch (error) {
+    console.error("Delete Account Error:", error);
+    throw new Error(error.response?.data?.detail || "Failed to delete account");
+  }
+};
+
 // --- Helper for authenticated requests ---
 const getAuthHeaders = async () => {
   const token = await AsyncStorage.getItem("userToken");
@@ -64,27 +82,38 @@ const getAuthHeaders = async () => {
 
 // --- Business Card Functions ---
 
-export const sendCardToOCR = async (imageUri) => {
+export const sendCardToOCR = async (imageUri, extraParams = {}) => {
   try {
     const headers = await getAuthHeaders();
     const formData = new FormData();
-    let uri = imageUri;
-    if (Platform.OS === "android" && !uri.startsWith("file://")) {
-      uri = "file://" + uri;
+
+    if (Platform.OS === "web") {
+      const response = await fetch(imageUri);
+      const blob = await response.blob();
+      formData.append("file", blob, "upload.jpg");
+    } else {
+      let uri = imageUri;
+      if (Platform.OS === "android" && !uri.startsWith("file://")) {
+        uri = "file://" + uri;
+      }
+      formData.append("file", {
+        uri,
+        type: "image/jpeg",
+        name: "upload.jpg",
+      });
     }
 
-    formData.append("file", {
-      uri,
-      type: "image/jpeg",
-      name: "upload.jpg",
-    });
+    if (extraParams.eventName) formData.append("event_name", extraParams.eventName);
+    if (extraParams.lat) formData.append("location_lat", extraParams.lat.toString());
+    if (extraParams.lng) formData.append("location_lng", extraParams.lng.toString());
+    if (extraParams.locationName) formData.append("location_name", extraParams.locationName);
 
     const response = await axios.post(`${BASE_URL}/scan`, formData, {
       headers: {
         ...headers,
         "Content-Type": "multipart/form-data",
       },
-      timeout: 20000,
+      timeout: 30000,
     });
 
     return response.data.data;
@@ -137,5 +166,65 @@ export const setCardAsOwner = async (cardId) => {
   } catch (error) {
     console.error("Set Owner Error:", error);
     return false;
+  }
+};
+
+// --- New Feature APIs ---
+
+export const updateCard = async (cardId, cardData) => {
+  try {
+    const headers = await getAuthHeaders();
+    const response = await axios.put(`${BASE_URL}/cards/${cardId}`, cardData, { headers });
+    return response.data.data;
+  } catch (error) {
+    console.error("Update Card Error:", error);
+    return null;
+  }
+};
+
+export const toggleFavorite = async (cardId) => {
+  try {
+    const headers = await getAuthHeaders();
+    const response = await axios.post(`${BASE_URL}/cards/${cardId}/favorite`, {}, { headers });
+    return response.data.is_favorite;
+  } catch (error) {
+    console.error("Toggle Favorite Error:", error);
+    return null;
+  }
+};
+
+export const exportVCard = async (cardId) => {
+  try {
+    const headers = await getAuthHeaders();
+    const response = await axios.get(`${BASE_URL}/cards/${cardId}/vcard`, {
+      headers,
+      responseType: 'blob'
+    });
+    return response.data;
+  } catch (error) {
+    console.error("Export vCard Error:", error);
+    return null;
+  }
+};
+
+export const updateUserSettings = async (settings) => {
+  try {
+    const headers = await getAuthHeaders();
+    const response = await axios.put(`${BASE_URL}/users/me/settings`, settings, { headers });
+    return response.data;
+  } catch (error) {
+    console.error("Update Settings Error:", error);
+    return null;
+  }
+};
+
+export const getCurrentUser = async () => {
+  try {
+    const headers = await getAuthHeaders();
+    const response = await axios.get(`${BASE_URL}/users/me`, { headers });
+    return response.data;
+  } catch (error) {
+    console.error("Get User Error:", error);
+    return null;
   }
 };

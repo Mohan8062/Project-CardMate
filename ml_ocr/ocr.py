@@ -57,58 +57,71 @@ def extract_emails(full_text):
         return list(OrderedDict.fromkeys(emails))
     compressed = re.sub(r"\s+", "", full_text)
     fallback_full = re.findall(
-        r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+(?:com|in|net|org|co|biz|info|edu|gov)\b",
+        r"[A-Za-z0-9._%+\-]+(?:@|\(at\)|\[at\]|\(@)[A-Za-z0-9.\-]+(?:com|in|net|org|co|biz|info|edu|gov|io|tech|me|app)\b",
         compressed
     )
     fixed = []
     for c in fallback_full:
-        c2 = re.sub(r"(com|in|net|org|co|biz|info|edu|gov)$", r".\1", c)
-        c2 = c2.replace("(at)", "@").replace("[at]", "@").replace("(@", "@")
-        c2 = c2.replace(",com", ".com").replace("com,", ".com")
+        # Normalize the separator
+        c2 = re.sub(r"(\(at\)|\[at\]|\(@)", "@", c)
+        # Fix missing dot before TLD
+        c2 = re.sub(r"(com|in|net|org|co|biz|info|edu|gov|io|tech|me|app)$", r".\1", c2)
+        # Avoid double dots
+        c2 = c2.replace("..", ".")
         fixed.append(c2)
     return list(OrderedDict.fromkeys(fixed))
 
 def extract_phones(full_text):
     phones = []
-    raw = re.findall(r"(?:\+?\d[\d\-\s\(\)]{5,}\d)", full_text)
+    # Match various phone formats but ignore 6-digit numbers that look like pincodes
+    raw = re.findall(r"(?:\+?\d[\d\-\s\(\)]{6,}\d)", full_text)
     for p in raw:
         cleaned = re.sub(r"[^\d+]", "", p)
         digits_only = re.sub(r"[^\d]", "", cleaned)
-        if 6 <= len(digits_only) <= 14:
-            phones.append(cleaned)
-    compressed = re.sub(r"\s+", "", full_text)
-    extra = re.findall(r"\d{6,14}", compressed)
-    for e in extra:
-        if e not in phones:
-            phones.append(e)
+        # Avoid common pincodes (6 digits) and very short/long numbers
+        if (len(digits_only) >= 10 and len(digits_only) <= 13) or (len(digits_only) in [7, 8]):
+            if not (len(digits_only) == 6):
+                phones.append(cleaned)
+    # Group landline segments if city code is separate (e.g. 044 4689 2301)
+    # This logic looks for 3-4 digit blocks near 7-8 digit blocks
+    parts = re.findall(r"\b\d{2,4}\b", full_text)
+    for i in range(len(parts)-1):
+        if len(parts[i]) in [3, 4] and len(parts[i+1]) in [7, 8]:
+            combined = parts[i] + parts[i+1]
+            if combined not in [p.replace("+", "").replace(" ", "") for p in phones]:
+                phones.append(combined)
+    
     return list(OrderedDict.fromkeys(phones))
 
 def extract_websites(full_text):
-    web_re = r"(https?://[A-Za-z0-9\-\._~:/\?#\[\]@!$&'()*+,;=%]+|www\.[A-Za-z0-9\-\._]+\.[A-Za-z]{2,}|[A-Za-z0-9\-\._]+\.(com|in|net|org|co|biz|info|io|tech)\b)"
+    web_re = r"(https?://[A-Za-z0-9\-\._~:/\?#\[\]@!$&'()*+,;=%]+|www\.[A-Za-z0-9\-\._]+\.[A-Za-z]{2,}|[A-Za-z0-9\-\._]+\.(com|in|net|org|co|biz|info|io|tech|me|app)\b)"
     matches = re.findall(web_re, full_text)
     sites = []
     for m in matches:
         candidate = m[0] if isinstance(m, tuple) else m
         candidate = candidate.strip().rstrip(".,;")
-        sites.append(candidate)
+        if "." in candidate and len(candidate) > 4:
+            sites.append(candidate.lower())
     return list(OrderedDict.fromkeys(sites))
 
 def looks_like_name(line):
-    words = [w for w in re.split(r"\s+", line.strip()) if w]
-    if not (1 <= len(words) <= 3):
-        return False
+    line = line.strip()
+    if not line: return False
     if re.search(r"\d|@|www\.|http", line):
         return False
-    company_bad = re.compile(
-        r"\b(pvt|ltd|llp|private|limited|industries|solutions|machines|technologies|services|inc)\b",
-        re.I
-    )
-    if company_bad.search(line):
+    # Exclude address and company keywords
+    bad_keywords = r"\b(nagar|street|road|lane|tower|park|floor|block|sector|ltd|pvt|corp|inc|solutions|services|technologies|architects|associates|st\.|rd\.|logistics|department|dept|office)\b"
+    if re.search(bad_keywords, line, re.I):
+        return False
+    if line.count(',') + line.count(';') + line.count(':') > 1:
+        return False
+    words = [w for w in re.split(r"[\s\.]+", line) if w]
+    if not (1 <= len(words) <= 4):
         return False
     for w in words:
-        if re.fullmatch(r"[A-Z]\.", w):
+        if len(w) == 1 and w.isalpha():
             continue
-        if not (w[0].isupper() and (len(w) == 1 or w[1:].islower())):
+        if not (w[0].isupper()):
             return False
     return True
 
@@ -126,16 +139,19 @@ def extract_job_title(lines):
         "engineer","manager","director","executive","consultant","founder",
         "ceo","cto","cfo","president","vp","vice","coordinator","lead",
         "head","officer","architect","developer","designer","specialist",
-        "supervisor","sales","marketing","operations","administrator"
+        "supervisor","sales","marketing","operations","administrator","proprietor",
+        "partner","owner","principal","representative","development","business",
+        "secretary","assistant"
     ]
     for ln in lines:
         lw = ln.lower()
         if len(lw) < 3 or "@" in lw or re.search(r"www\.|http", lw):
             continue
+        # Improved: Look for keywords even without surrounding spaces (handles "Dy.Manager")
         if any(k in lw for k in job_keywords):
-            if not re.search(r"\b(pvt|ltd|llp|inc|industries|solutions)\b", lw):
+            if not re.search(r"\b(pvt|ltd|llp|inc|industries|solutions|corp)\b", lw):
                 return ln.strip()
-    return "(not detected)"
+    return ""
 
 def is_all_caps_line(line):
     words = [w for w in re.split(r"\s+", line) if w.isalpha()]
@@ -172,9 +188,9 @@ def extract_company(lines):
 
 def extract_address(lines):
     addr_keywords = [
-        "road","street","nagar","lane","tower","park","sector","phase","building","block",
+        "road","street","st.","rd.","nagar","lane","tower","park","sector","phase","building","block",
         "pincode","pin","near","opp","chennai","bangalore","coimbatore","kolkata","mumbai",
-        "delhi","hyderabad","no.","no","nos","addr","village"
+        "delhi","hyderabad","no.","no","nos","addr","village","industrial","estate"
     ]
     addr_candidates = []
     i = 0
@@ -182,27 +198,83 @@ def extract_address(lines):
     while i < N:
         ln = lines[i].lower()
         pin_match = re.search(r"\b\d{6}\b", ln)
-        house_match = re.search(r"\b\d{1,4}\/?\d{0,4}\b", ln)
-        if any(k in ln for k in addr_keywords) or pin_match or house_match:
+        if any(f" {k}" in f" {ln}" for k in addr_keywords) or pin_match:
             group = [lines[i].strip()]
             j = i + 1
-            while j < N and (re.search(r"\d|,|-|road|street|lane|nagar|sector", lines[j].lower())):
-                group.append(lines[j].strip())
-                j += 1
-            addr_candidates.append(", ".join(group))
+            while j < N:
+                next_ln = lines[j].lower()
+                if (re.search(r"\d|,|-", next_ln) or any(k in next_ln for k in ["road","street","nagar"])):
+                    if "@" in next_ln or "www" in next_ln: break
+                    group.append(lines[j].strip())
+                    j += 1
+                else: break
+            
+            addr_str = ", ".join(group)
+            # Remove segments that look purely like phone numbers or landlines
+            segments = [s.strip() for s in addr_str.split(",")]
+            filtered_segments = []
+            for s in segments:
+                digits_only = re.sub(r"\D", "", s)
+                # Ignore segments that are mostly digits (like phone numbers) but keep those with address markers
+                has_marker = any(k in s.lower() for k in ["no", "level", "unit", "floor", "highway", "tower"])
+                if not has_marker and len(digits_only) >= 7 and s.replace(" ", "").replace("-", "").replace("+", "").isdigit():
+                    continue
+                filtered_segments.append(s)
+            
+            if filtered_segments:
+                addr_candidates.append(", ".join(filtered_segments))
             i = j
-        else:
-            i += 1
-    return list(OrderedDict.fromkeys(addr_candidates)) if addr_candidates else []
+        else: i += 1
+    
+    filtered = [a for a in addr_candidates if len(a) > 10 and not re.fullmatch(r"[\d\s\-+\(\),]+", a)]
+    return list(OrderedDict.fromkeys(filtered))
 
 # ---------------------------
 # Structured extraction
 # ---------------------------
+def extract_qr_data(img):
+    try:
+        detector = cv2.QRCodeDetector()
+        val, points, qrcode = detector.detectAndDecode(img)
+        if val:
+            return val
+    except:
+        pass
+    return None
+
+def parse_vcard(vcard_text):
+    data = {}
+    if "BEGIN:VCARD" not in vcard_text.upper():
+        return None
+    
+    name_match = re.search(r"\bN:(?:[^;]*;)?([^;\n]+)", vcard_text)
+    if name_match: data["name"] = name_match.group(1).replace(";", " ").strip()
+    
+    org_match = re.search(r"\bORG:([^\n]+)", vcard_text)
+    if org_match: data["company"] = org_match.group(1).split(";")[0].strip()
+    
+    title_match = re.search(r"\bTITLE:([^\n]+)", vcard_text)
+    if title_match: data["designation"] = title_match.group(1).strip()
+    
+    phones = re.findall(r"\bTEL(?:;[^:]*)?:([^\n]+)", vcard_text)
+    if phones: data["phones"] = [p.strip() for p in phones]
+    
+    emails = re.findall(r"\bEMAIL(?:;[^:]*)?:([^\n]+)", vcard_text)
+    if emails: data["emails"] = [e.strip() for e in emails]
+    
+    return data
+
 def extract_structured_from_image(img_path, visualize=False):
     ocr_data = ocr_lines_from_image(img_path)
+    img = ocr_data["raw_image"]
     lines = ocr_data["lines"]
     full_text = "\n".join(lines)
 
+    # 1. Try QR Code first
+    qr_text = extract_qr_data(img)
+    qr_data = parse_vcard(qr_text) if qr_text else None
+
+    # 2. OCR Extraction
     structured = {
         "name": extract_name(lines),
         "designation": extract_job_title(lines),
@@ -214,20 +286,22 @@ def extract_structured_from_image(img_path, visualize=False):
         "ocr_avg_confidence": ocr_data["avg_confidence"]
     }
 
-    if visualize:
-        vis = ocr_data["raw_image"].copy()
-        for bbox, text, prob in reader.readtext(preprocess_for_cards(ocr_data["raw_image"]), detail=1):
-            pts = np.int32(bbox)
-            x_min, y_min = int(np.min(pts[:,0])), int(np.min(pts[:,1]))
-            x_max, y_max = int(np.max(pts[:,0])), int(np.max(pts[:,1]))
-            cv2.rectangle(vis, (x_min, y_min), (x_max, y_max), (0,255,0), 1)
-            cv2.putText(vis, text, (x_min, max(10, y_min-8)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,0,0), 3, cv2.LINE_AA)
-            cv2.putText(vis, text, (x_min, max(10, y_min-8)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255,255,255), 1, cv2.LINE_AA)
-        plt.figure(figsize=(10,6))
-        plt.imshow(cv2.cvtColor(vis, cv2.COLOR_BGR2RGB))
-        plt.axis("off")
-        plt.title("OCR Visualization")
-        plt.show()
+    # 3. Merge QR data if found (QR is more accurate)
+    if qr_data:
+        for k, v in qr_data.items():
+            if v: structured[k] = v
+
+    # 4. Clean up Company (Fix "FIRSTLIFT LOGISTICS PVT LTD FIRSTLIFT")
+    if structured["company"]:
+        parts = structured["company"].split()
+        unique_parts = []
+        seen = set()
+        for p in parts:
+            clean_p = re.sub(r'[^\w]', '', p).upper()
+            if clean_p not in seen or len(clean_p) < 4:
+                unique_parts.append(p)
+                seen.add(clean_p)
+        structured["company"] = " ".join(unique_parts)
 
     return structured
 

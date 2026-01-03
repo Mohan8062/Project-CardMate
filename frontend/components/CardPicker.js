@@ -1,39 +1,82 @@
-// components/CardPicker.js
 import React, { useEffect, useState, useRef } from "react";
 import {
   View,
-  Text,
-  StyleSheet,
-  TouchableOpacity,
-  Image,
-  ScrollView,
-  Modal,
   Alert,
-  ActivityIndicator,
-  FlatList,
   SafeAreaView,
-  TextInput,
+  Modal,
+  TouchableOpacity,
+  Text,
+  Linking,
+  Platform,
   Dimensions,
+  StyleSheet
 } from "react-native";
 import * as ImagePicker from "expo-image-picker";
 import { Camera } from "expo-camera";
-import { Ionicons, MaterialCommunityIcons, FontAwesome5 } from "@expo/vector-icons";
-import { sendCardToOCR, getAllCards, deleteCard, clearAllCards, setCardAsOwner } from "../services/api";
+import * as Location from 'expo-location';
+import { Ionicons } from "@expo/vector-icons";
+
+// Theme & Styles
+import { THEME } from "../theme";
+import { createStyles } from "../styles/globalStyles";
+import { parseJSON } from "../utils/cardUtils";
+
+// Services
+import {
+  sendCardToOCR,
+  getAllCards,
+  deleteCard,
+  setCardAsOwner,
+  logoutUser,
+  deleteAccount,
+  updateCard,
+  toggleFavorite,
+  exportVCard,
+  updateUserSettings,
+} from "../services/api";
+
+// Components
+import ScanPage from "./cards/ScanPage";
+import ScannedListPage from "./cards/ScannedListPage";
+import MyProfilePage from "./cards/MyProfilePage";
+import CardDetailsModal from "./cards/CardDetailsModal";
+import EditCardModal from "./cards/EditCardModal";
+import AddContactModal from "./cards/AddContactModal";
+import QRCodeModal from "./cards/QRCodeModal";
+import FAB from "./common/FAB";
+import TabBar from "./common/TabBar";
 
 const { width } = Dimensions.get("window");
 
-export default function CardPicker() {
+export default function CardPicker({ user, onLogout }) {
+  // --- State Management ---
   const [activeTab, setActiveTab] = useState("scan"); // 'scan', 'scanned_list', 'my_profile'
-  const [modalVisible, setModalVisible] = useState(false);
+
+  // Modals
+  const [modalVisible, setModalVisible] = useState(false); // Add Contact Modal
+  const [qrModalVisible, setQrModalVisible] = useState(false);
+  const [editMode, setEditMode] = useState(false);
+  const [selectedCard, setSelectedCard] = useState(null);
+
+  // Camera
   const [cameraOpen, setCameraOpen] = useState(false);
   const [cameraPerm, setCameraPerm] = useState(null);
   const cameraRef = useRef(null);
 
+  // Data
   const [ocrResult, setOcrResult] = useState(null);
   const [loading, setLoading] = useState(false);
   const [history, setHistory] = useState([]);
+  const [currentEvent, setCurrentEvent] = useState(null);
   const [searchQuery, setSearchQuery] = useState("");
+  const [editData, setEditData] = useState({});
+  const [darkMode, setDarkMode] = useState(false); // Default to light mode or check user prefs
 
+  // Theme Derivation
+  const theme = darkMode ? THEME.dark : THEME.light;
+  const styles = createStyles(theme);
+
+  // --- Effects ---
   useEffect(() => {
     (async () => {
       const { status } = await Camera.requestCameraPermissionsAsync();
@@ -42,6 +85,7 @@ export default function CardPicker() {
     loadHistory();
   }, []);
 
+  // --- API Actions ---
   const loadHistory = async () => {
     try {
       setLoading(true);
@@ -58,12 +102,51 @@ export default function CardPicker() {
     try {
       setLoading(true);
       setOcrResult(null);
-      const res = await sendCardToOCR(uri);
-      if (res && !res.error) {
-        setOcrResult(res);
+
+      // Feature 3: Capture Location
+      let locationData = {};
+      try {
+        const { status } = await Location.requestForegroundPermissionsAsync();
+        if (status === 'granted') {
+          const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+          locationData = {
+            lat: loc.coords.latitude,
+            lng: loc.coords.longitude,
+          };
+
+          // Optional: Reverse Geostrategy to get city name
+          const reversed = await Location.reverseGeocodeAsync({
+            latitude: loc.coords.latitude,
+            longitude: loc.coords.longitude
+          });
+          if (reversed.length > 0) {
+            const r = reversed[0];
+            locationData.locationName = `${r.city || r.region}, ${r.country}`;
+          }
+        }
+      } catch (e) {
+        console.warn("Location fetch failed", e);
+      }
+
+      const res = await sendCardToOCR(uri, {
+        ...locationData,
+        eventName: currentEvent
+      });
+
+      if (res && res.data) {
+        // Feature: Automatically redirect to list and open card
+        setOcrResult(null);
         await loadHistory();
+
+        // Switch tab immediately
+        setActiveTab("scanned_list");
+
+        // Open the modal after a short delay
+        setTimeout(() => {
+          setSelectedCard(res.data);
+        }, 100);
       } else {
-        Alert.alert("OCR Error", res.error || "Failed to process card");
+        Alert.alert("OCR Error", "Failed to process card");
       }
     } catch (err) {
       console.error("OCR request failed", err);
@@ -85,6 +168,75 @@ export default function CardPicker() {
     }
   };
 
+  const removeHistoryItem = (id) => {
+    if (Platform.OS === 'web') {
+      if (confirm("Delete this card permanently?")) {
+        deleteCard(id).then(success => {
+          if (success) loadHistory();
+        });
+      }
+    } else {
+      Alert.alert("Delete", "Delete this card permanently?", [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Delete",
+          style: "destructive",
+          onPress: async () => {
+            const success = await deleteCard(id);
+            if (success) loadHistory();
+          },
+        },
+      ]);
+    }
+  };
+
+  const handleToggleFavorite = async (cardId) => {
+    const result = await toggleFavorite(cardId);
+    if (result !== null) {
+      loadHistory();
+      if (selectedCard && selectedCard.id === cardId) {
+        setSelectedCard({ ...selectedCard, is_favorite: result });
+      }
+    }
+  };
+
+  // --- User Account Actions ---
+  const handleLogoutPress = () => {
+    if (Platform.OS === 'web') {
+      if (confirm("Sign out of your account?")) {
+        logoutUser().then(() => onLogout());
+      }
+    } else {
+      Alert.alert("Logout", "Sign out of your account?", [
+        { text: "Cancel", style: "cancel" },
+        { text: "Logout", onPress: async () => { await logoutUser(); onLogout(); } }
+      ]);
+    }
+  };
+
+  const handleDeletePress = () => {
+    Alert.alert("Delete Account", "Permanently delete account?", [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Delete", style: "destructive", onPress: async () => {
+          try {
+            setLoading(true);
+            await deleteAccount();
+            onLogout();
+          } catch (err) { Alert.alert("Error", err.message); }
+          finally { setLoading(false); }
+        }
+      }
+    ]);
+  };
+
+  const handleToggleDarkMode = async () => {
+    const newMode = !darkMode;
+    setDarkMode(newMode);
+    await updateUserSettings({ dark_mode: newMode });
+  };
+
+  // --- Image Handling ---
   const pickFromGallery = async () => {
     try {
       const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -100,9 +252,7 @@ export default function CardPicker() {
       const uri = res.assets ? res.assets[0].uri : res.uri;
       setModalVisible(false);
       await processAndSave(uri);
-    } catch (err) {
-      console.warn("pickFromGallery", err);
-    }
+    } catch (err) { console.warn("pickFromGallery", err); }
   };
 
   const capturePhoto = async () => {
@@ -111,283 +261,190 @@ export default function CardPicker() {
       const photo = await cameraRef.current.takePictureAsync({ quality: 0.9 });
       setCameraOpen(false);
       await processAndSave(photo.uri);
-    } catch (err) {
-      Alert.alert("Error", "Failed to take photo.");
+    } catch (err) { Alert.alert("Error", "Failed to take photo."); }
+  };
+
+  // --- Quick Actions ---
+  const handleQuickCall = (phones) => {
+    const phoneList = parseJSON(phones);
+    if (phoneList.length > 0) Linking.openURL(`tel:${phoneList[0]}`);
+    else Alert.alert("No Phone", "No phone number available");
+  };
+
+  const handleQuickEmail = (emails) => {
+    const emailList = parseJSON(emails);
+    if (emailList.length > 0) Linking.openURL(`mailto:${emailList[0]}`);
+    else Alert.alert("No Email", "No email address available");
+  };
+
+  const handleQuickWeb = (websites) => {
+    const webList = parseJSON(websites);
+    if (webList.length > 0) {
+      let url = webList[0];
+      if (!url.startsWith("http")) url = "https://" + url;
+      Linking.openURL(url);
+    } else Alert.alert("No Website", "No website available");
+  };
+
+  const handleExportVCard = async (cardId) => {
+    const blob = await exportVCard(cardId);
+    if (blob && Platform.OS === "web") {
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "contact.vcf";
+      a.click();
+      URL.revokeObjectURL(url);
+    } else if (blob) {
+      Alert.alert("Export", "vCard exported successfully");
     }
   };
 
-  const removeHistoryItem = (id) => {
-    Alert.alert("Delete", "Delete this card permanently?", [
-      { text: "Cancel", style: "cancel" },
-      {
-        text: "Delete",
-        style: "destructive",
-        onPress: async () => {
-          const success = await deleteCard(id);
-          if (success) loadHistory();
-        },
-      },
-    ]);
+  // --- Edit Mode ---
+  const startEditMode = (card) => {
+    setEditData({
+      name: card.name || "",
+      designation: card.designation || "",
+      company: card.company || "",
+      phones: parseJSON(card.phones).join(", "),
+      emails: parseJSON(card.emails).join(", "),
+      notes: card.notes || "",
+    });
+    setEditMode(true);
   };
 
+  const saveCardEdit = async () => {
+    if (!selectedCard) return;
+    const updated = await updateCard(selectedCard.id, {
+      name: editData.name,
+      designation: editData.designation,
+      company: editData.company,
+      phones: JSON.stringify(editData.phones.split(",").map(p => p.trim()).filter(p => p)),
+      emails: JSON.stringify(editData.emails.split(",").map(e => e.trim()).filter(e => e)),
+      notes: editData.notes,
+    });
+    if (updated) {
+      setSelectedCard(updated);
+      setEditMode(false);
+      loadHistory();
+      Alert.alert("Success", "Card updated successfully");
+    }
+  };
+
+  // --- Derived State ---
   const filteredHistory = history.filter((c) => !c.is_owner && (
     c.name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
     c.company?.toLowerCase().includes(searchQuery.toLowerCase())
   ));
-
   const ownerCard = history.find(c => c.is_owner);
 
-  const renderScanPage = () => (
-    <View style={{ flex: 1 }}>
-      <View style={styles.headerContainer}>
-        <View style={styles.headerRow}>
-          <Text style={styles.headerTitle}>CardMate</Text>
-          <View style={{ flexDirection: 'row', gap: 15 }}>
-            <TouchableOpacity><Ionicons name="settings-outline" size={24} color="#fff" /></TouchableOpacity>
-            <TouchableOpacity onPress={() => Alert.alert("Logout", "Please reload the app to sign out.")}><Ionicons name="log-out-outline" size={24} color="#fff" /></TouchableOpacity>
-          </View>
-        </View>
-      </View>
-
-      <ScrollView contentContainerStyle={styles.scrollContent}>
-        <View style={styles.emptyState}>
-          <View style={styles.emptyIllustration}>
-            <View style={styles.cardOutline}>
-              <View style={styles.cardEyes}>
-                <View style={styles.eye} />
-                <View style={styles.eye} />
-              </View>
-              <View style={styles.cardLines} />
-            </View>
-            <View style={styles.sparkle}><Ionicons name="star" size={30} color="#FBBF24" /></View>
-          </View>
-          <Text style={styles.emptyText}>Quick Scan</Text>
-          <Text style={styles.emptySubText}>Capture a card to analyze and save it</Text>
-
-          <TouchableOpacity style={styles.scanBtnMain} onPress={() => setModalVisible(true)}>
-            <Text style={styles.scanBtnText}>SCAN BUSINESS CARD</Text>
-          </TouchableOpacity>
-        </View>
-
-        {loading && <ActivityIndicator style={{ marginTop: 30 }} color="#1E3A8A" size="large" />}
-
-        {ocrResult && (
-          <View style={styles.activeResultCard}>
-            <View style={styles.resultHeader}>
-              <Text style={styles.resultTitle}>Last Scan Success!</Text>
-              <TouchableOpacity onPress={() => setOcrResult(null)}>
-                <Ionicons name="close-circle" size={24} color="#64748B" />
-              </TouchableOpacity>
-            </View>
-            <View style={styles.resultBody}>
-              <Text style={styles.activeName}>{ocrResult.name}</Text>
-              <Text style={styles.activeDetail}>{ocrResult.designation || "No Designation"}</Text>
-              <Text style={styles.activeDetail}>{ocrResult.company || "No Company"}</Text>
-
-              <TouchableOpacity
-                style={styles.setOwnerBtn}
-                onPress={() => handleSetOwner(ocrResult.id)}
-              >
-                <Ionicons name="person-add" size={16} color="#fff" />
-                <Text style={styles.setOwnerBtnText}>Set as My Profile Card</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        )}
-      </ScrollView>
-    </View>
-  );
-
-  const renderScannedListPage = () => (
-    <View style={{ flex: 1 }}>
-      <View style={styles.headerContainer}>
-        <View style={styles.headerRow}>
-          <Text style={styles.headerTitle}>Scanned Cards</Text>
-          <TouchableOpacity onPress={() => loadHistory()}><Ionicons name="refresh" size={24} color="#fff" /></TouchableOpacity>
-        </View>
-        <View style={styles.searchBar}>
-          <Ionicons name="search" size={20} color="#94A3B8" />
-          <TextInput
-            placeholder="Search collected cards"
-            placeholderTextColor="#94A3B8"
-            style={styles.searchInput}
-            value={searchQuery}
-            onChangeText={setSearchQuery}
-          />
-        </View>
-      </View>
-
-      <ScrollView contentContainerStyle={styles.scrollContent}>
-        <View style={styles.historyList}>
-          <Text style={styles.listSectionTitle}>All Scanned Cards ({filteredHistory.length})</Text>
-          {filteredHistory.length === 0 ? (
-            <View style={[styles.emptyState, { marginTop: 60 }]}>
-              <Ionicons name="library-outline" size={60} color="#CBD5E1" />
-              <Text style={styles.noOwnerText}>No scanned cards yet</Text>
-            </View>
-          ) : (
-            filteredHistory.map((item, index) => (
-              <View key={item.id || index} style={styles.historyCard}>
-                <View style={styles.historyThumb}>
-                  <Ionicons name="person" size={24} color="#1E3A8A" />
-                </View>
-                <View style={styles.historyBody}>
-                  <Text style={styles.historyName}>{item.name}</Text>
-                  <Text style={styles.historyDetail}>{item.designation || "—"}</Text>
-                  <Text style={styles.historyDate}>{new Date(item.created_at).toLocaleDateString()}</Text>
-                </View>
-                <TouchableOpacity onPress={() => removeHistoryItem(item.id)}>
-                  <Ionicons name="trash-outline" size={20} color="#EF4444" />
-                </TouchableOpacity>
-              </View>
-            ))
-          )}
-        </View>
-      </ScrollView>
-    </View>
-  );
-
-  const renderMyProfilePage = () => (
-    <View style={{ flex: 1 }}>
-      <View style={styles.headerContainer}>
-        <View style={styles.headerRow}>
-          <Text style={styles.headerTitle}>My card</Text>
-        </View>
-      </View>
-      <ScrollView contentContainerStyle={styles.scrollContent}>
-        <View style={styles.ownerSection}>
-          <Text style={styles.listSectionTitle}>Personal Business Card</Text>
-          {ownerCard ? (
-            <View style={styles.ownerCardBig}>
-              <View style={[styles.historyThumb, { width: 60, height: 60 }]}>
-                <Ionicons name="star" size={32} color="#FBBF24" />
-              </View>
-              <View style={styles.historyBody}>
-                <Text style={[styles.historyName, { fontSize: 20 }]}>{ownerCard.name}</Text>
-                <Text style={[styles.historyDetail, { fontSize: 16 }]}>{ownerCard.designation}</Text>
-                <Text style={styles.historyDetail}>{ownerCard.company}</Text>
-              </View>
-              <TouchableOpacity onPress={() => removeHistoryItem(ownerCard.id)}>
-                <Ionicons name="trash-outline" size={24} color="#EF4444" />
-              </TouchableOpacity>
-            </View>
-          ) : (
-            <View style={styles.noOwnerBox}>
-              <Ionicons name="card" size={40} color="#CBD5E1" />
-              <Text style={styles.noOwnerText}>No Profile Card Set</Text>
-              <Text style={styles.noOwnerSub}>Scan your card and select 'Set as My Profile Card' on the Scan tab</Text>
-
-              <TouchableOpacity
-                style={[styles.scanBtnMain, { marginTop: 20 }]}
-                onPress={() => setActiveTab("scan")}
-              >
-                <Text style={styles.scanBtnText}>GO TO SCAN</Text>
-              </TouchableOpacity>
-            </View>
-          )}
-        </View>
-      </ScrollView>
-    </View>
-  );
-
+  // --- Render ---
   const renderActiveTab = () => {
     switch (activeTab) {
-      case "scan": return renderScanPage();
-      case "scanned_list": return renderScannedListPage();
-      case "my_profile": return renderMyProfilePage();
-      default: return renderScanPage();
+      case "scan":
+        return <ScanPage
+          theme={theme} styles={styles}
+          ocrResult={ocrResult} loading={loading}
+          setModalVisible={setModalVisible} setOcrResult={setOcrResult}
+          handleSetOwner={handleSetOwner} handleLogoutPress={handleLogoutPress}
+          darkMode={darkMode}
+          currentEvent={currentEvent} setCurrentEvent={setCurrentEvent}
+        />;
+      case "scanned_list":
+        return <ScannedListPage
+          theme={theme} styles={styles}
+          loading={loading} darkMode={darkMode}
+          searchQuery={searchQuery} setSearchQuery={setSearchQuery}
+          loadHistory={loadHistory} filteredHistory={filteredHistory}
+          setSelectedCard={setSelectedCard} removeHistoryItem={removeHistoryItem}
+        />;
+      case "my_profile":
+        return <MyProfilePage
+          theme={theme} styles={styles} user={user}
+          ownerCard={ownerCard} handleLogoutPress={handleLogoutPress}
+          setSelectedCard={setSelectedCard} removeHistoryItem={removeHistoryItem}
+          setActiveTab={setActiveTab} setQrModalVisible={setQrModalVisible}
+          handleToggleDarkMode={handleToggleDarkMode} handleDeletePress={handleDeletePress}
+          darkMode={darkMode}
+        />;
+      default: return null;
     }
   };
 
   return (
-    <SafeAreaView style={styles.safeArea}>
+    <SafeAreaView style={[styles.safeArea, darkMode && { backgroundColor: theme.bg }]}>
       <View style={styles.mainContainer}>
         {renderActiveTab()}
 
-        {/* Updated Bottom Tab Bar with 3 items */}
-        <View style={styles.tabBar}>
-          <TouchableOpacity
-            style={styles.tabItem}
-            onPress={() => setActiveTab("scan")}
-          >
-            <View style={[styles.tabIconBg, activeTab === "scan" && styles.tabActiveBg]}>
-              <Ionicons name="scan-outline" size={24} color={activeTab === "scan" ? "#1E3A8A" : "#64748B"} />
-            </View>
-            <Text style={[styles.tabLabel, activeTab === "scan" && styles.tabActiveLabel]}>Scan</Text>
-          </TouchableOpacity>
+        <FAB
+          activeTab={activeTab}
+          onPress={() => setModalVisible(true)}
+          theme={theme}
+        />
 
-          <TouchableOpacity
-            style={styles.tabItem}
-            onPress={() => setActiveTab("scanned_list")}
-          >
-            <View style={[styles.tabIconBg, activeTab === "scanned_list" && styles.tabActiveBg]}>
-              <Ionicons name="list-outline" size={24} color={activeTab === "scanned_list" ? "#1E3A8A" : "#64748B"} />
-            </View>
-            <Text style={[styles.tabLabel, activeTab === "scanned_list" && styles.tabActiveLabel]}>Scanned card</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={styles.tabItem}
-            onPress={() => setActiveTab("my_profile")}
-          >
-            <View style={[styles.tabIconBg, activeTab === "my_profile" && styles.tabActiveBg]}>
-              <Ionicons name="person-outline" size={24} color={activeTab === "my_profile" ? "#1E3A8A" : "#64748B"} />
-            </View>
-            <Text style={[styles.tabLabel, activeTab === "my_profile" && styles.tabActiveLabel]}>My card</Text>
-          </TouchableOpacity>
-        </View>
+        <TabBar
+          activeTab={activeTab}
+          setActiveTab={setActiveTab}
+          theme={theme}
+        />
       </View>
 
-      <Modal visible={modalVisible} animationType="slide" transparent>
-        <TouchableOpacity
-          style={styles.modalOverlay}
-          activeOpacity={1}
-          onPress={() => setModalVisible(false)}
-        >
-          <View style={styles.bottomSheet}>
-            <View style={styles.sheetHandle} />
-            <Text style={styles.sheetHeader}>Add contact...</Text>
+      {/* Modals */}
+      <CardDetailsModal
+        theme={theme} styles={styles} user={user}
+        selectedCard={selectedCard} setSelectedCard={setSelectedCard}
+        editMode={editMode} visible={!!selectedCard}
+        handleToggleFavorite={handleToggleFavorite}
+        startEditMode={startEditMode}
+        removeHistoryItem={removeHistoryItem}
+        handleQuickCall={(nums) => {
+          const arr = parseJSON(nums);
+          if (arr.length > 0) Linking.openURL(`tel:${arr[0]}`);
+        }}
+        handleQuickEmail={(emails) => {
+          const arr = parseJSON(emails);
+          if (arr.length > 0) Linking.openURL(`mailto:${arr[0]}`);
+        }}
+        handleQuickWeb={(webs) => {
+          const arr = parseJSON(webs);
+          if (arr.length > 0) {
+            let url = arr[0];
+            if (!url.startsWith('http')) url = 'https://' + url;
+            Linking.openURL(url);
+          }
+        }}
+        handleExportVCard={exportVCard}
+      />
 
-            <TouchableOpacity style={styles.sheetButton} onPress={() => { setModalVisible(false); setCameraOpen(true); }}>
-              <View style={styles.sheetIconBox}>
-                <Ionicons name="camera" size={22} color="#475569" />
-              </View>
-              <Text style={styles.sheetButtonText}>Scan card or QR code</Text>
-            </TouchableOpacity>
+      <EditCardModal
+        theme={theme} styles={styles}
+        editMode={editMode} setEditMode={setEditMode}
+        editData={editData} setEditData={setEditData}
+        saveCardEdit={saveCardEdit}
+      />
 
-            <TouchableOpacity style={styles.sheetButton} onPress={pickFromGallery}>
-              <View style={styles.sheetIconBox}>
-                <Ionicons name="images" size={22} color="#475569" />
-              </View>
-              <Text style={styles.sheetButtonText}>Upload from Gallery</Text>
-            </TouchableOpacity>
+      <AddContactModal
+        theme={theme} styles={styles}
+        modalVisible={modalVisible} setModalVisible={setModalVisible}
+        pickFromGallery={pickFromGallery} setCameraOpen={setCameraOpen}
+      />
 
-            <TouchableOpacity style={styles.sheetButton} onPress={() => Alert.alert("NFC", "NFC Scan initiated...")}>
-              <View style={styles.sheetIconBox}>
-                <MaterialCommunityIcons name="credit-card-wireless" size={22} color="#475569" />
-              </View>
-              <Text style={styles.sheetButtonText}>Scan NFC tag</Text>
-            </TouchableOpacity>
+      <QRCodeModal
+        theme={theme} styles={styles}
+        qrModalVisible={qrModalVisible} setQrModalVisible={setQrModalVisible}
+        ownerCard={ownerCard}
+      />
 
-            <TouchableOpacity style={styles.sheetButton} onPress={() => Alert.alert("Manual", "Enter details manually...")}>
-              <View style={styles.sheetIconBox}>
-                <FontAwesome5 name="pen" size={18} color="#475569" />
-              </View>
-              <Text style={styles.sheetButtonText}>Enter manually</Text>
-            </TouchableOpacity>
-          </View>
-        </TouchableOpacity>
-      </Modal>
-
+      {/* Camera Component Overlay */}
       <Modal visible={cameraOpen} animationType="fade">
         <View style={{ flex: 1, backgroundColor: '#000' }}>
           <Camera style={{ flex: 1 }} ref={cameraRef} />
-          <View style={styles.cameraFooter}>
+          <View style={camStyles.cameraFooter}>
             <TouchableOpacity onPress={() => setCameraOpen(false)}>
               <Ionicons name="close" size={32} color="#fff" />
             </TouchableOpacity>
-            <TouchableOpacity style={styles.captureRing} onPress={capturePhoto}>
-              <View style={styles.captureCircle} />
+            <TouchableOpacity style={camStyles.captureRing} onPress={capturePhoto}>
+              <View style={camStyles.captureCircle} />
             </TouchableOpacity>
             <View style={{ width: 32 }} />
           </View>
@@ -397,155 +454,13 @@ export default function CardPicker() {
   );
 }
 
-const styles = StyleSheet.create({
-  safeArea: { flex: 1, backgroundColor: "#1E3A8A" },
-  mainContainer: { flex: 1, backgroundColor: "#F8FAFC" },
-
-  headerContainer: {
-    backgroundColor: "#1E3A8A",
-    paddingHorizontal: 20,
-    paddingTop: 10,
-    paddingBottom: 20,
-  },
-  headerRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 15 },
-  headerTitle: { color: "#fff", fontSize: 24, fontWeight: "700" },
-
-  searchBar: {
-    backgroundColor: "rgba(255,255,255,0.15)",
-    borderRadius: 25,
-    flexDirection: "row",
-    alignItems: "center",
-    paddingHorizontal: 15,
-    height: 48,
-  },
-  searchInput: { flex: 1, color: "#fff", marginHorizontal: 10, fontSize: 16 },
-
-  scrollContent: { paddingVertical: 20 },
-
-  emptyState: { alignItems: "center", justifyContent: "center", paddingHorizontal: 40, marginTop: 20 },
-  emptyIllustration: { marginBottom: 20, alignItems: 'center' },
-  cardOutline: {
-    width: 100, height: 65,
-    borderWidth: 3, borderColor: "#94A3B8",
-    borderRadius: 8, backgroundColor: "#E2E8F0",
-    justifyContent: 'center', alignItems: 'center'
-  },
-  cardEyes: { flexDirection: 'row', gap: 8 },
-  eye: { width: 8, height: 8, backgroundColor: '#1E3A8A', borderRadius: 4 },
-  cardLines: { width: 40, height: 4, backgroundColor: '#94A3B8', marginTop: 8, borderRadius: 2 },
-  sparkle: { position: 'absolute', top: -15, right: -15 },
-
-  emptyText: { fontSize: 20, color: "#1E293B", textAlign: "center", fontWeight: "700", marginBottom: 8 },
-  emptySubText: { fontSize: 14, color: "#94A3B8", textAlign: "center", marginBottom: 25 },
-
-  scanBtnMain: {
-    backgroundColor: "#1E3A8A",
-    paddingHorizontal: 30,
-    paddingVertical: 15,
-    borderRadius: 30,
-    elevation: 4,
-    shadowOpacity: 0.3,
-  },
-  scanBtnText: { color: "#fff", fontWeight: "700", fontSize: 14 },
-
-  historyList: { paddingHorizontal: 20 },
-  listSectionTitle: { fontSize: 12, fontWeight: "800", color: "#94A3B8", marginBottom: 15, textTransform: 'uppercase', letterSpacing: 1 },
-  historyCard: {
-    backgroundColor: "#fff",
-    borderRadius: 16,
-    padding: 16,
-    flexDirection: "row",
-    alignItems: "center",
-    marginBottom: 12,
-    borderWidth: 1, borderColor: '#F1F5F9'
-  },
-  historyThumb: {
-    width: 48, height: 48,
-    backgroundColor: "#EFF6FF",
-    borderRadius: 12,
-    alignItems: "center", justifyContent: "center",
-    marginRight: 15
-  },
-  historyBody: { flex: 1 },
-  historyName: { fontSize: 16, fontWeight: "700", color: "#1E293B" },
-  historyDetail: { fontSize: 13, color: "#64748B", marginTop: 2 },
-  historyDate: { fontSize: 11, color: "#94A3B8", marginTop: 4 },
-
-  activeResultCard: {
-    backgroundColor: "#fff",
-    margin: 20,
-    borderRadius: 20,
-    padding: 20,
-    elevation: 8,
-    shadowColor: "#000", shadowOpacity: 0.1, shadowRadius: 10
-  },
-  resultHeader: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 15 },
-  resultTitle: { color: "#059669", fontWeight: "800", fontSize: 16 },
-  activeName: { fontSize: 24, fontWeight: "800", color: "#1E293B" },
-  activeDetail: { fontSize: 15, color: "#64748B", marginTop: 4 },
-
-  setOwnerBtn: {
-    backgroundColor: "#1E3A8A",
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: 12,
-    borderRadius: 12,
-    marginTop: 20,
-    gap: 8
-  },
-  setOwnerBtnText: { color: '#fff', fontWeight: '700' },
-
-  ownerSection: { paddingHorizontal: 20 },
-  ownerCardBig: {
-    backgroundColor: "#fff",
-    borderRadius: 24,
-    padding: 20,
-    flexDirection: 'row',
-    alignItems: 'center',
-    borderWidth: 2, borderColor: '#1E3A8A'
-  },
-  noOwnerBox: {
-    backgroundColor: "#F1F5F9",
-    borderRadius: 20,
-    padding: 30,
-    alignItems: 'center',
-    borderStyle: 'dashed', borderWidth: 2, borderColor: '#CBD5E1'
-  },
-  noOwnerText: { fontSize: 18, fontWeight: '700', color: '#64748B', marginTop: 10 },
-  noOwnerSub: { fontSize: 12, color: '#94A3B8', marginTop: 4, textAlign: 'center' },
-
-  tabBar: {
-    height: 75,
-    backgroundColor: "#fff",
-    flexDirection: "row",
-    borderTopWidth: 1, borderTopColor: "#F1F5F9",
-    paddingBottom: 15
-  },
-  tabItem: { flex: 1, alignItems: "center", justifyContent: "center" },
-  tabIconBg: { padding: 8, borderRadius: 12 },
-  tabActiveBg: { backgroundColor: "#EFF6FF" },
-  tabLabel: { fontSize: 10, color: "#94A3B8", marginTop: 4, fontWeight: '600' },
-  tabActiveLabel: { color: "#1E3A8A" },
-
-  modalOverlay: { flex: 1, backgroundColor: "rgba(0,0,0,0.6)", justifyContent: "flex-end" },
-  bottomSheet: {
-    backgroundColor: "#fff",
-    borderTopLeftRadius: 30, borderTopRightRadius: 30,
-    padding: 25,
-    paddingTop: 15
-  },
-  sheetHandle: { width: 50, height: 5, backgroundColor: "#E2E8F0", borderRadius: 3, alignSelf: 'center', marginBottom: 25 },
-  sheetHeader: { fontSize: 18, color: "#1E293B", marginBottom: 15, fontWeight: '700' },
-  sheetButton: { flexDirection: "row", alignItems: "center", paddingVertical: 18, borderBottomWidth: 1, borderBottomColor: '#F8FAFC' },
-  sheetIconBox: { width: 45, alignItems: 'center' },
-  sheetButtonText: { fontSize: 16, color: "#1E293B", fontWeight: '600' },
-
+// Minimal separate styles for Camera overlay which is always dark
+const camStyles = StyleSheet.create({
   cameraFooter: {
-    position: 'absolute', bottom: 50,
+    position: 'absolute', bottom: 60,
     flexDirection: 'row', width: '100%',
     justifyContent: 'space-around', alignItems: 'center'
   },
-  captureRing: { width: 80, height: 80, borderRadius: 40, borderWidth: 5, borderColor: '#fff', justifyContent: 'center', alignItems: 'center' },
-  captureCircle: { width: 62, height: 62, borderRadius: 31, backgroundColor: '#fff' },
+  captureRing: { width: 84, height: 84, borderRadius: 42, borderWidth: 4, borderColor: '#fff', justifyContent: 'center', alignItems: 'center' },
+  captureCircle: { width: 68, height: 68, borderRadius: 34, backgroundColor: '#fff' },
 });
