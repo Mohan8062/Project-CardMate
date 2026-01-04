@@ -1,5 +1,6 @@
 import React from 'react';
-import { View, Text, TouchableOpacity, ScrollView, Modal, SafeAreaView, TextInput } from 'react-native';
+import { View, Text, TouchableOpacity, ScrollView, Modal, TextInput } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from "@expo/vector-icons";
 
 export default function EditCardModal({
@@ -7,6 +8,7 @@ export default function EditCardModal({
     styles,
     editMode,
     setEditMode,
+    creationMode,
     editData,
     setEditData,
     saveCardEdit
@@ -19,7 +21,9 @@ export default function EditCardModal({
                         <TouchableOpacity onPress={() => setEditMode(false)}>
                             <Ionicons name="close" size={28} color={theme.textPrimary} />
                         </TouchableOpacity>
-                        <Text style={[styles.headerTitle, { fontSize: 20 }]}>Edit Card</Text>
+                        <Text style={[styles.headerTitle, { fontSize: 20 }]}>
+                            {creationMode ? "Create E-Card" : "Edit Card"}
+                        </Text>
                         <TouchableOpacity onPress={saveCardEdit}>
                             <Ionicons name="checkmark" size={28} color={theme.primary} />
                         </TouchableOpacity>
@@ -61,6 +65,17 @@ export default function EditCardModal({
                     </View>
 
                     <View style={styles.editFormGroup}>
+                        <Text style={[styles.editLabel, { color: theme.textSecondary }]}>Address</Text>
+                        <TextInput
+                            style={[styles.editInput, { backgroundColor: theme.bg, borderColor: theme.border, color: theme.textPrimary }]}
+                            value={editData.addresses}
+                            onChangeText={(t) => setEditData({ ...editData, addresses: t })}
+                            placeholder="Street, City, Pincode"
+                            placeholderTextColor={theme.textSecondary}
+                        />
+                    </View>
+
+                    <View style={styles.editFormGroup}>
                         <Text style={[styles.editLabel, { color: theme.textSecondary }]}>Phones (comma separated)</Text>
                         <TextInput
                             style={[styles.editInput, { backgroundColor: theme.bg, borderColor: theme.border, color: theme.textPrimary }]}
@@ -83,14 +98,13 @@ export default function EditCardModal({
                     </View>
 
                     <View style={styles.editFormGroup}>
-                        <Text style={[styles.editLabel, { color: theme.textSecondary }]}>Notes</Text>
+                        <Text style={[styles.editLabel, { color: theme.textSecondary }]}>Websites (comma separated)</Text>
                         <TextInput
-                            style={[styles.editInput, { height: 100, textAlignVertical: 'top', backgroundColor: theme.bg, borderColor: theme.border, color: theme.textPrimary }]}
-                            value={editData.notes}
-                            onChangeText={(t) => setEditData({ ...editData, notes: t })}
-                            placeholder="Add personal notes about this contact..."
+                            style={[styles.editInput, { backgroundColor: theme.bg, borderColor: theme.border, color: theme.textPrimary }]}
+                            value={editData.websites}
+                            onChangeText={(t) => setEditData({ ...editData, websites: t })}
+                            placeholder="www.example.com"
                             placeholderTextColor={theme.textSecondary}
-                            multiline
                         />
                     </View>
 

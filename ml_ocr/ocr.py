@@ -5,6 +5,10 @@ import numpy as np
 import easyocr
 import matplotlib.pyplot as plt
 from collections import OrderedDict
+try:
+    from pyzbar import pyzbar
+except ImportError:
+    pyzbar = None
 
 # ---------------------------
 # OCR Reader
@@ -51,24 +55,27 @@ def ocr_lines_from_image(img_path):
 # Extraction functions
 # ---------------------------
 def extract_emails(full_text):
-    email_re = r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}"
+    # Match with optional spaces around @
+    email_re = r"[A-Za-z0-9._%+\-]+\s*@\s*[A-Za-z0-9.\-]+\.[A-Za-z]{2,}"
     emails = re.findall(email_re, full_text)
     if emails:
-        return list(OrderedDict.fromkeys(emails))
+        return list(OrderedDict.fromkeys([e.replace(" ", "") for e in emails]))
+    
     compressed = re.sub(r"\s+", "", full_text)
+    # Catch common OCR mistakes for @ like & or (a) or circles
     fallback_full = re.findall(
-        r"[A-Za-z0-9._%+\-]+(?:@|\(at\)|\[at\]|\(@)[A-Za-z0-9.\-]+(?:com|in|net|org|co|biz|info|edu|gov|io|tech|me|app)\b",
-        compressed
+        r"[A-Za-z0-9._%+\-]+(?:@|\(at\)|\[at\]|\(@|&|\(a\)|©)[A-Za-z0-9.\-]+(?:com|in|net|org|co|biz|info|edu|gov|io|tech|me|app|co\.in)\b",
+        compressed, re.I
     )
     fixed = []
     for c in fallback_full:
         # Normalize the separator
-        c2 = re.sub(r"(\(at\)|\[at\]|\(@)", "@", c)
+        c2 = re.sub(r"(\(at\)|\[at\]|\(@|&|\(a\)|©)", "@", c)
         # Fix missing dot before TLD
-        c2 = re.sub(r"(com|in|net|org|co|biz|info|edu|gov|io|tech|me|app)$", r".\1", c2)
-        # Avoid double dots
-        c2 = c2.replace("..", ".")
-        fixed.append(c2)
+        c2 = re.sub(r"(com|in|net|org|co|biz|info|edu|gov|io|tech|me|app|co\.in)$", r".\1", c2)
+        # Avoid double dots and handle dots read as commas
+        c2 = c2.replace(",com", ".com").replace(",in", ".in").replace("..", ".")
+        fixed.append(c2.lower())
     return list(OrderedDict.fromkeys(fixed))
 
 def extract_phones(full_text):
@@ -82,25 +89,40 @@ def extract_phones(full_text):
         if (len(digits_only) >= 10 and len(digits_only) <= 13) or (len(digits_only) in [7, 8]):
             if not (len(digits_only) == 6):
                 phones.append(cleaned)
-    # Group landline segments if city code is separate (e.g. 044 4689 2301)
-    # This logic looks for 3-4 digit blocks near 7-8 digit blocks
-    parts = re.findall(r"\b\d{2,4}\b", full_text)
+    # Group landline segments if city code is separate (e.g. 044 - 4689 2301)
+    # Strict Area Code Filter: Only group if it looks like a real Indian area code (044, 080, 022, 011, etc.)
+    indian_area_codes = ["044", "080", "022", "011", "033", "040", "020", "0120", "0124"]
+    parts = re.findall(r"\b\d{2,8}\b", full_text)
     for i in range(len(parts)-1):
-        if len(parts[i]) in [3, 4] and len(parts[i+1]) in [7, 8]:
-            combined = parts[i] + parts[i+1]
+        p1, p2 = parts[i], parts[i+1]
+        
+        # Only merge if p1 is a recognized area code or if p2 is a long landline segment
+        if (p1 in indian_area_codes or p1 == "044") and len(p2) in [7, 8]:
+            combined = p1 + p2
             if combined not in [p.replace("+", "").replace(" ", "") for p in phones]:
                 phones.append(combined)
+        
+        # Handle 044 4689 2301 style
+        if i < len(parts)-2:
+            p3 = parts[i+2]
+            if (p1 in indian_area_codes) and len(p2) == 4 and len(p3) == 4:
+                combined = p1 + p2 + p3
+                if combined not in [p.replace("+", "").replace(" ", "") for p in phones]:
+                    phones.append(combined)
     
     return list(OrderedDict.fromkeys(phones))
 
 def extract_websites(full_text):
+    # Normalize spaces in common website markers
+    text = re.sub(r"w\s*w\s*w\s*[.,]\s*", "www.", full_text, flags=re.I)
     web_re = r"(https?://[A-Za-z0-9\-\._~:/\?#\[\]@!$&'()*+,;=%]+|www\.[A-Za-z0-9\-\._]+\.[A-Za-z]{2,}|[A-Za-z0-9\-\._]+\.(com|in|net|org|co|biz|info|io|tech|me|app)\b)"
-    matches = re.findall(web_re, full_text)
+    matches = re.findall(web_re, text)
     sites = []
     for m in matches:
         candidate = m[0] if isinstance(m, tuple) else m
-        candidate = candidate.strip().rstrip(".,;")
-        if "." in candidate and len(candidate) > 4:
+        # Basic cleaning
+        candidate = candidate.strip("., ")
+        if candidate:
             sites.append(candidate.lower())
     return list(OrderedDict.fromkeys(sites))
 
@@ -198,41 +220,105 @@ def extract_address(lines):
     while i < N:
         ln = lines[i].lower()
         pin_match = re.search(r"\b\d{6}\b", ln)
-        if any(f" {k}" in f" {ln}" for k in addr_keywords) or pin_match:
+        # Check if line contains any keyword - removed leading space constraint to be more robust
+        has_kw = any(k in ln for k in addr_keywords)
+        
+        if has_kw or pin_match:
+            original_idx = i
             group = [lines[i].strip()]
             j = i + 1
             while j < N:
                 next_ln = lines[j].lower()
-                if (re.search(r"\d|,|-", next_ln) or any(k in next_ln for k in ["road","street","nagar"])):
+                # Continue grouping if next line has digits, punctuation, or keywords
+                if (re.search(r"\d|,|-", next_ln) or any(k in next_ln for k in ["road","street","nagar","tower","floor","level"])):
                     if "@" in next_ln or "www" in next_ln: break
                     group.append(lines[j].strip())
                     j += 1
                 else: break
             
             addr_str = ", ".join(group)
-            # Remove segments that look purely like phone numbers or landlines
-            segments = [s.strip() for s in addr_str.split(",")]
+            segments = [s.strip() for s in re.split(r"[,;]+", addr_str)]
             filtered_segments = []
             for s in segments:
+                if not s: continue
+                lw = s.lower()
+                if any(k in lw for k in ["tel:", "fax:", "mob:", "ph:", "phone:", "email:"]):
+                    continue
+                
                 digits_only = re.sub(r"\D", "", s)
-                # Ignore segments that are mostly digits (like phone numbers) but keep those with address markers
-                has_marker = any(k in s.lower() for k in ["no", "level", "unit", "floor", "highway", "tower"])
+                has_marker = any(k in lw for k in ["no", "level", "unit", "floor", "highway", "tower", "lane", "building", "tower", "anmol"])
+                
+                # Keep short segments if they contain markers (like 'Unit A8') or are long enough
+                if not has_marker and len(digits_only) > 0 and len(digits_only) <= 4 and len(s) < 8:
+                    continue
                 if not has_marker and len(digits_only) >= 7 and s.replace(" ", "").replace("-", "").replace("+", "").isdigit():
                     continue
                 filtered_segments.append(s)
             
             if filtered_segments:
-                addr_candidates.append(", ".join(filtered_segments))
+                clean_addr = ", ".join(filtered_segments)
+                clean_addr = re.sub(r",\s*,", ",", clean_addr).strip()
+                address_to_add = clean_addr.strip(", ")
+                if len(address_to_add) > 5:
+                    # Store with original index to preserve order later
+                    addr_candidates.append({
+                        "index": original_idx,
+                        "text": address_to_add
+                    })
             i = j
         else: i += 1
     
-    filtered = [a for a in addr_candidates if len(a) > 10 and not re.fullmatch(r"[\d\s\-+\(\),]+", a)]
-    return list(OrderedDict.fromkeys(filtered))
+    if not addr_candidates: return []
+    
+    # 1. Deduplicate while maintaining order
+    # If one candidate is a substring of another, keep the longer one at its earliest occurrence
+    unique_candidates = []
+    for cand in addr_candidates:
+        is_covered = False
+        for other in addr_candidates:
+            if cand != other and cand["text"] in other["text"]:
+                is_covered = True
+                break
+        if not is_covered:
+            unique_candidates.append(cand)
+            
+    # 2. Sort by original visual index (top-to-bottom)
+    unique_candidates.sort(key=lambda x: x["index"])
+    
+    # 3. Merge candidates that are nearby (spatial proximity)
+    # If two address blocks start within 5 lines of each other, they are likely the same address
+    if not unique_candidates: return []
+    
+    merged_results = []
+    current = unique_candidates[0]
+    
+    for next_cand in unique_candidates[1:]:
+        # If the gap between lines is small, merge them
+        if next_cand["index"] - (current["index"] + 1) <= 3:
+            current["text"] = current["text"] + ", " + next_cand["text"]
+            # Re-clean merged text
+            current["text"] = re.sub(r",\s*,", ",", current["text"])
+        else:
+            merged_results.append(current["text"])
+            current = next_cand
+    merged_results.append(current["text"])
+    
+    return [t.strip(", ") for t in merged_results]
 
 # ---------------------------
 # Structured extraction
 # ---------------------------
 def extract_qr_data(img):
+    # Method 1: PyZBar (Much more reliable)
+    if pyzbar:
+        try:
+            decoded = pyzbar.decode(img)
+            if decoded:
+                return decoded[0].data.decode('utf-8')
+        except:
+            pass
+    
+    # Method 2: OpenCV Fallback
     try:
         detector = cv2.QRCodeDetector()
         val, points, qrcode = detector.detectAndDecode(img)
@@ -259,8 +345,12 @@ def parse_vcard(vcard_text):
     phones = re.findall(r"\bTEL(?:;[^:]*)?:([^\n]+)", vcard_text)
     if phones: data["phones"] = [p.strip() for p in phones]
     
-    emails = re.findall(r"\bEMAIL(?:;[^:]*)?:([^\n]+)", vcard_text)
+    emails = re.findall(r"\bEMAIL(?:;[^:]*)?:([^\n\r]+)", vcard_text, re.I)
     if emails: data["emails"] = [e.strip() for e in emails]
+    
+    # Handle both URL and URL;WORK style
+    webs = re.findall(r"\bURL(?:;[^:]*)?:([^\n\r]+)", vcard_text, re.I)
+    if webs: data["websites"] = [w.strip() for w in webs]
     
     return data
 

@@ -2,15 +2,16 @@ import React, { useEffect, useState, useRef } from "react";
 import {
   View,
   Alert,
-  SafeAreaView,
   Modal,
   TouchableOpacity,
   Text,
   Linking,
   Platform,
   Dimensions,
-  StyleSheet
+  StyleSheet,
+  Share
 } from "react-native";
+import { SafeAreaView } from 'react-native-safe-area-context';
 import * as ImagePicker from "expo-image-picker";
 import { Camera } from "expo-camera";
 import * as Location from 'expo-location';
@@ -33,6 +34,7 @@ import {
   toggleFavorite,
   exportVCard,
   updateUserSettings,
+  createCard
 } from "../services/api";
 
 // Components
@@ -43,6 +45,7 @@ import CardDetailsModal from "./cards/CardDetailsModal";
 import EditCardModal from "./cards/EditCardModal";
 import AddContactModal from "./cards/AddContactModal";
 import QRCodeModal from "./cards/QRCodeModal";
+import EventModal from "./cards/EventModal";
 import FAB from "./common/FAB";
 import TabBar from "./common/TabBar";
 
@@ -56,7 +59,9 @@ export default function CardPicker({ user, onLogout }) {
   const [modalVisible, setModalVisible] = useState(false); // Add Contact Modal
   const [qrModalVisible, setQrModalVisible] = useState(false);
   const [editMode, setEditMode] = useState(false);
+  const [creationMode, setCreationMode] = useState(false);
   const [selectedCard, setSelectedCard] = useState(null);
+  const [eventModalVisible, setEventModalVisible] = useState(false);
 
   // Camera
   const [cameraOpen, setCameraOpen] = useState(false);
@@ -133,7 +138,7 @@ export default function CardPicker({ user, onLogout }) {
         eventName: currentEvent
       });
 
-      if (res && res.data) {
+      if (res) {
         // Feature: Automatically redirect to list and open card
         setOcrResult(null);
         await loadHistory();
@@ -143,7 +148,7 @@ export default function CardPicker({ user, onLogout }) {
 
         // Open the modal after a short delay
         setTimeout(() => {
-          setSelectedCard(res.data);
+          setSelectedCard(res);
         }, 100);
       } else {
         Alert.alert("OCR Error", "Failed to process card");
@@ -215,19 +220,32 @@ export default function CardPicker({ user, onLogout }) {
   };
 
   const handleDeletePress = () => {
-    Alert.alert("Delete Account", "Permanently delete account?", [
-      { text: "Cancel", style: "cancel" },
-      {
-        text: "Delete", style: "destructive", onPress: async () => {
-          try {
-            setLoading(true);
-            await deleteAccount();
-            onLogout();
-          } catch (err) { Alert.alert("Error", err.message); }
-          finally { setLoading(false); }
+    const performDelete = async () => {
+      try {
+        setLoading(true);
+        await deleteAccount();
+        onLogout();
+      } catch (err) {
+        if (Platform.OS === 'web') {
+          alert("Error: " + err.message);
+        } else {
+          Alert.alert("Error", err.message);
         }
+      } finally {
+        setLoading(false);
       }
-    ]);
+    };
+
+    if (Platform.OS === 'web') {
+      if (confirm("Permanently delete your account and all saved cards? This action cannot be undone.")) {
+        performDelete();
+      }
+    } else {
+      Alert.alert("Delete Account", "Permanently delete account?", [
+        { text: "Cancel", style: "cancel" },
+        { text: "Delete", style: "destructive", onPress: performDelete }
+      ]);
+    }
   };
 
   const handleToggleDarkMode = async () => {
@@ -245,7 +263,7 @@ export default function CardPicker({ user, onLogout }) {
         return;
       }
       const res = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        mediaTypes: ['images'],
         quality: 1,
       });
       if (res.canceled) return;
@@ -287,16 +305,30 @@ export default function CardPicker({ user, onLogout }) {
   };
 
   const handleExportVCard = async (cardId) => {
-    const blob = await exportVCard(cardId);
-    if (blob && Platform.OS === "web") {
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = "contact.vcf";
-      a.click();
-      URL.revokeObjectURL(url);
-    } else if (blob) {
-      Alert.alert("Export", "vCard exported successfully");
+    try {
+      const data = await exportVCard(cardId);
+      if (!data) {
+        Alert.alert("Export Error", "No contact data received from server.");
+        return;
+      }
+
+      if (Platform.OS === "web") {
+        const url = URL.createObjectURL(data);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = "contact.vcf";
+        a.click();
+        URL.revokeObjectURL(url);
+      } else {
+        // Mobile: Use native share sheet
+        await Share.share({
+          message: data, // The vCard text
+          title: "Save Contact",
+        });
+      }
+    } catch (error) {
+      console.error("Export Trace:", error);
+      Alert.alert("Export Failed", "An unexpected error occurred.");
     }
   };
 
@@ -308,26 +340,57 @@ export default function CardPicker({ user, onLogout }) {
       company: card.company || "",
       phones: parseJSON(card.phones).join(", "),
       emails: parseJSON(card.emails).join(", "),
-      notes: card.notes || "",
+      websites: parseJSON(card.websites).join(", "),
+      addresses: parseJSON(card.addresses).join(", "),
     });
+    setCreationMode(false);
+    setEditMode(true);
+  };
+
+  const handleCreateECard = () => {
+    setEditData({
+      name: "",
+      designation: "",
+      company: "",
+      phones: "",
+      emails: "",
+      websites: "",
+      addresses: "",
+    });
+    setCreationMode(true);
     setEditMode(true);
   };
 
   const saveCardEdit = async () => {
-    if (!selectedCard) return;
-    const updated = await updateCard(selectedCard.id, {
+    const cardPayload = {
       name: editData.name,
       designation: editData.designation,
       company: editData.company,
       phones: JSON.stringify(editData.phones.split(",").map(p => p.trim()).filter(p => p)),
       emails: JSON.stringify(editData.emails.split(",").map(e => e.trim()).filter(e => e)),
-      notes: editData.notes,
-    });
-    if (updated) {
-      setSelectedCard(updated);
-      setEditMode(false);
-      loadHistory();
-      Alert.alert("Success", "Card updated successfully");
+      websites: JSON.stringify(editData.websites.split(",").map(w => w.trim()).filter(w => w)),
+      addresses: JSON.stringify(editData.addresses.trim() ? [editData.addresses.trim()] : []),
+    };
+
+    if (creationMode) {
+      const newCard = await createCard(cardPayload);
+      if (newCard) {
+        // Auto-set as owner if creating from profile
+        await setCardAsOwner(newCard.id);
+        setEditMode(false);
+        setCreationMode(false);
+        loadHistory();
+        Alert.alert("Success", "Your E-Card has been created and set as your profile!");
+      }
+    } else {
+      if (!selectedCard) return;
+      const updated = await updateCard(selectedCard.id, cardPayload);
+      if (updated) {
+        setSelectedCard(updated);
+        setEditMode(false);
+        loadHistory();
+        Alert.alert("Success", "Card updated successfully");
+      }
     }
   };
 
@@ -349,6 +412,7 @@ export default function CardPicker({ user, onLogout }) {
           handleSetOwner={handleSetOwner} handleLogoutPress={handleLogoutPress}
           darkMode={darkMode}
           currentEvent={currentEvent} setCurrentEvent={setCurrentEvent}
+          openEventModal={() => setEventModalVisible(true)}
         />;
       case "scanned_list":
         return <ScannedListPage
@@ -365,6 +429,7 @@ export default function CardPicker({ user, onLogout }) {
           setSelectedCard={setSelectedCard} removeHistoryItem={removeHistoryItem}
           setActiveTab={setActiveTab} setQrModalVisible={setQrModalVisible}
           handleToggleDarkMode={handleToggleDarkMode} handleDeletePress={handleDeletePress}
+          handleCreateECard={handleCreateECard}
           darkMode={darkMode}
         />;
       default: return null;
@@ -372,7 +437,7 @@ export default function CardPicker({ user, onLogout }) {
   };
 
   return (
-    <SafeAreaView style={[styles.safeArea, darkMode && { backgroundColor: theme.bg }]}>
+    <SafeAreaView style={[styles.safeArea, !!darkMode ? { backgroundColor: theme.bg } : null]}>
       <View style={styles.mainContainer}>
         {renderActiveTab()}
 
@@ -413,12 +478,13 @@ export default function CardPicker({ user, onLogout }) {
             Linking.openURL(url);
           }
         }}
-        handleExportVCard={exportVCard}
+        handleExportVCard={handleExportVCard}
       />
 
       <EditCardModal
         theme={theme} styles={styles}
         editMode={editMode} setEditMode={setEditMode}
+        creationMode={creationMode}
         editData={editData} setEditData={setEditData}
         saveCardEdit={saveCardEdit}
       />
@@ -433,6 +499,13 @@ export default function CardPicker({ user, onLogout }) {
         theme={theme} styles={styles}
         qrModalVisible={qrModalVisible} setQrModalVisible={setQrModalVisible}
         ownerCard={ownerCard}
+      />
+
+      <EventModal
+        visible={eventModalVisible}
+        onClose={() => setEventModalVisible(false)}
+        onSave={(name) => setCurrentEvent(name)}
+        theme={theme}
       />
 
       {/* Camera Component Overlay */}

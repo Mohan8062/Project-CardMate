@@ -131,7 +131,9 @@ export const getAllCards = async () => {
     const response = await axios.get(`${BASE_URL}/cards`, { headers });
     return response.data;
   } catch (error) {
-    console.error("Fetch Cards Error:", error);
+    if (error.response?.status !== 401) {
+      console.error("Fetch Cards Error:", error);
+    }
     return [];
   }
 };
@@ -182,6 +184,17 @@ export const updateCard = async (cardId, cardData) => {
   }
 };
 
+export const createCard = async (cardData) => {
+  try {
+    const headers = await getAuthHeaders();
+    const response = await axios.post(`${BASE_URL}/cards`, cardData, { headers });
+    return response.data.data;
+  } catch (error) {
+    console.error("Create Card Error:", error);
+    return null;
+  }
+};
+
 export const toggleFavorite = async (cardId) => {
   try {
     const headers = await getAuthHeaders();
@@ -198,7 +211,7 @@ export const exportVCard = async (cardId) => {
     const headers = await getAuthHeaders();
     const response = await axios.get(`${BASE_URL}/cards/${cardId}/vcard`, {
       headers,
-      responseType: 'blob'
+      responseType: Platform.OS === 'web' ? 'blob' : 'text'
     });
     return response.data;
   } catch (error) {
@@ -224,7 +237,9 @@ export const getCurrentUser = async () => {
     const response = await axios.get(`${BASE_URL}/users/me`, { headers });
     return response.data;
   } catch (error) {
-    console.error("Get User Error:", error);
+    if (error.response?.status !== 401) {
+      console.error("Get User Error:", error);
+    }
     return null;
   }
 };

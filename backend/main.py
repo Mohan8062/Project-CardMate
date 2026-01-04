@@ -130,6 +130,9 @@ async def scan_card(
         if "investor" in designation or "capital" in company:
             tags.append("Investor")
             
+        if event_name:
+            tags.append(event_name)
+            
         # Create and save BusinessCard associated with current user
         import json
         card = BusinessCard(
@@ -172,8 +175,6 @@ def get_all_cards(
     cards = session.exec(select(BusinessCard).where(BusinessCard.user_id == current_user.id).order_by(BusinessCard.created_at.desc())).all()
     return cards
 
-# --- New Feature Endpoints ---
-
 class CardUpdate(BaseModel):
     name: Optional[str] = None
     designation: Optional[str] = None
@@ -185,6 +186,34 @@ class CardUpdate(BaseModel):
     notes: Optional[str] = None
     tags: Optional[str] = None
     event_name: Optional[str] = None
+
+@app.post("/cards")
+def create_card_manual(
+    card_data: CardUpdate,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user)
+):
+    import json
+    new_card = BusinessCard(
+        name=card_data.name or "Unnamed",
+        designation=card_data.designation,
+        company=card_data.company,
+        phones=card_data.phones or "[]",
+        emails=card_data.emails or "[]",
+        websites=card_data.websites or "[]",
+        addresses=card_data.addresses or "[]",
+        notes=card_data.notes or "",
+        tags=card_data.tags or "[]",
+        event_name=card_data.event_name,
+        user_id=current_user.id,
+        is_owner=False # Will be set separately if needed, or by logic
+    )
+    session.add(new_card)
+    session.commit()
+    session.refresh(new_card)
+    return {"message": "Card created", "data": new_card}
+
+# --- New Feature Endpoints ---
 
 @app.delete("/cards/{card_id}")
 def delete_card(
@@ -247,16 +276,6 @@ def clear_all_cards(
     return {"message": "All your cards cleared successfully"}
 
 # --- New Feature Endpoints ---
-
-class CardUpdate(BaseModel):
-    name: Optional[str] = None
-    designation: Optional[str] = None
-    company: Optional[str] = None
-    phones: Optional[str] = None
-    emails: Optional[str] = None
-    addresses: Optional[str] = None
-    websites: Optional[str] = None
-    notes: Optional[str] = None
 
 @app.put("/cards/{card_id}")
 def update_card(
@@ -322,6 +341,8 @@ def export_vcard(
     
     if not card:
         raise HTTPException(status_code=404, detail="Card not found")
+    
+    print(f"DEBUG: Exporting vCard for {card.name}")
     
     import json
     phones = json.loads(card.phones) if card.phones else []

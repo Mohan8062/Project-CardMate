@@ -15,6 +15,7 @@ export default function MyProfilePage({
     setQrModalVisible,
     handleToggleDarkMode,
     handleDeletePress,
+    handleCreateECard,
     darkMode
 }) {
     return (
@@ -65,12 +66,15 @@ export default function MyProfilePage({
                                     onPress={() => setQrModalVisible(true)}
                                 >
                                     <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                                        <View>
-                                            <Text style={[styles.historyName, { fontSize: 22, color: theme.textPrimary }]}>
+                                        <View style={{ flex: 1, marginRight: 10 }}>
+                                            <Text style={[styles.historyName, { fontSize: 22, color: theme.textPrimary }]} numberOfLines={1}>
                                                 {ownerCard.name}
                                             </Text>
-                                            <Text style={[styles.historyDetail, { fontSize: 16, color: theme.textSecondary, marginTop: 4 }]}>
+                                            <Text style={[styles.historyDetail, { fontSize: 16, color: theme.textSecondary, marginTop: 4 }]} numberOfLines={1}>
                                                 {ownerCard.designation}
+                                            </Text>
+                                            <Text style={[styles.historyDetail, { fontSize: 14, color: theme.textSecondary, marginTop: 2, fontWeight: '700' }]} numberOfLines={1}>
+                                                {ownerCard.company}
                                             </Text>
                                             <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 15, gap: 5 }}>
                                                 <Ionicons name="qr-code-outline" size={14} color={theme.accent} />
@@ -93,18 +97,29 @@ export default function MyProfilePage({
                             </TouchableOpacity>
                         </View>
                     ) : (
-                        <View style={[styles.noOwnerBox, { borderColor: theme.border }]}>
-                            <Ionicons name="card" size={40} color={theme.textSecondary} />
-                            <Text style={[styles.noOwnerText, { color: theme.textSecondary }]}>No Profile Card Set</Text>
-                            <Text style={[styles.noOwnerSub, { color: theme.textSecondary }]}>
-                                Scan your card and select 'Set as My Profile Card' on the Scan tab
+                        <View style={[styles.noOwnerBox, { borderColor: theme.border, paddingVertical: 30 }]}>
+                            <View style={{ backgroundColor: theme.secondary + '22', padding: 20, borderRadius: 50, marginBottom: 15 }}>
+                                <Ionicons name="id-card-outline" size={40} color={theme.primary} />
+                            </View>
+                            <Text style={[styles.noOwnerText, { color: theme.textPrimary, fontSize: 18, fontWeight: '700' }]}>No Digital Card Yet</Text>
+                            <Text style={[styles.noOwnerSub, { color: theme.textSecondary, textAlign: 'center', paddingHorizontal: 20, marginTop: 8 }]}>
+                                Create your own professional e-card to share your details instantly via QR.
                             </Text>
 
                             <TouchableOpacity
-                                style={[styles.scanBtnMain, { marginTop: 20, backgroundColor: theme.primary, borderWidth: 0 }]}
-                                onPress={() => setActiveTab("scan")}
+                                style={[styles.scanBtnMain, {
+                                    marginTop: 25,
+                                    backgroundColor: theme.textPrimary,
+                                    borderWidth: 0,
+                                    width: '80%',
+                                    flexDirection: 'row',
+                                    justifyContent: 'center',
+                                    alignItems: 'center'
+                                }]}
+                                onPress={handleCreateECard}
                             >
-                                <Text style={[styles.scanBtnText, { color: theme.bg }]}>GO TO SCAN</Text>
+                                <Ionicons name="add-circle" size={20} color={theme.bg} style={{ marginRight: 8 }} />
+                                <Text style={[styles.scanBtnText, { color: theme.bg, fontWeight: '800' }]}>CREATE A E-CARD</Text>
                             </TouchableOpacity>
                         </View>
                     )}
@@ -117,11 +132,11 @@ export default function MyProfilePage({
                         onPress={handleToggleDarkMode}
                     >
                         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                            <Ionicons name={darkMode ? "moon" : "sunny"} size={20} color={theme.primary} />
+                            <Ionicons name={!!darkMode ? "moon" : "sunny"} size={20} color={theme.primary} />
                             <Text style={[styles.editBtnText, { color: theme.textPrimary }]}>Dark Mode</Text>
                         </View>
-                        <View style={[styles.toggleSwitch, darkMode && { backgroundColor: theme.bg, borderColor: theme.primary }]}>
-                            <View style={[styles.toggleKnob, darkMode && { marginLeft: 22, backgroundColor: theme.primary }]} />
+                        <View style={[styles.toggleSwitch, !!darkMode ? { backgroundColor: theme.bg, borderColor: theme.primary } : null]}>
+                            <View style={[styles.toggleKnob, !!darkMode ? { marginLeft: 22, backgroundColor: theme.primary } : null]} />
                         </View>
                     </TouchableOpacity>
 

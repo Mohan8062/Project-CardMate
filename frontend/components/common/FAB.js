@@ -26,7 +26,7 @@ export default function FAB({ activeTab, onPress, theme }) {
                     colors={theme.primaryGradient}
                     style={styles.fabGradient}
                 >
-                    <Ionicons name="add" size={32} color={theme.bg} /> {/* Icon color checks out against primary gradient */}
+                    <Ionicons name="add" size={32} color={theme.bg} />
                 </LinearGradient>
             </TouchableOpacity>
         </Animated.View>
@@ -41,12 +41,12 @@ const styles = StyleSheet.create({
         zIndex: 100,
     },
     fabTouchable: {
-        width: 60, // Slightly smaller for minimal look
+        width: 60,
         height: 60,
         borderRadius: 30,
-        elevation: 0, // Flat
+        elevation: 0,
         borderWidth: 2,
-        borderColor: '#fff', // Border against background
+        borderColor: '#fff',
     },
     fabGradient: {
         width: '100%',

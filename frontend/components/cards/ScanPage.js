@@ -1,5 +1,6 @@
 import React from 'react';
-import { View, Text, TouchableOpacity, ScrollView, ActivityIndicator, Animated, Easing } from 'react-native';
+import { View, Text, TouchableOpacity, ScrollView, ActivityIndicator, Animated, Easing, Platform, Alert, StyleSheet } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
 
@@ -14,7 +15,8 @@ export default function ScanPage({
     handleLogoutPress,
     darkMode,
     currentEvent,
-    setCurrentEvent
+    setCurrentEvent,
+    openEventModal
 }) {
     // Feature 5: Dot Matrix Loading Animation
     const dotOpacity = React.useRef(new Animated.Value(0)).current;
@@ -49,7 +51,7 @@ export default function ScanPage({
 
     return (
         <View style={{ flex: 1, backgroundColor: theme.bg }}>
-            {currentEvent && (
+            {!!currentEvent ? (
                 <View style={styles.eventModeHeader}>
                     <Ionicons name="flash" size={12} color={theme.bg} />
                     <Text style={styles.eventModeText}>CONFERENCE MODE: {currentEvent.toUpperCase()}</Text>
@@ -57,20 +59,15 @@ export default function ScanPage({
                         <Ionicons name="close-circle" size={16} color={theme.bg} />
                     </TouchableOpacity>
                 </View>
-            )}
+            ) : null}
             <View style={styles.headerContainer}>
                 <View style={styles.headerRow}>
                     <Text style={styles.headerTitle}>CardMate</Text>
-                    <View style={{ flexDirection: 'row', gap: 15 }}>
-                        <TouchableOpacity onPress={handleLogoutPress} style={{ padding: 10, borderWidth: 1, borderColor: theme.border, borderRadius: 20 }}>
-                            <Ionicons name="log-out-outline" size={20} color={theme.textPrimary} />
-                        </TouchableOpacity>
-                    </View>
                 </View>
             </View>
 
             <ScrollView contentContainerStyle={styles.scrollContent}>
-                {!ocrResult && (
+                {!ocrResult ? (
                     <View style={styles.emptyState}>
                         <View style={styles.emptyIllustration}>
                             <View style={styles.cardOutline}>
@@ -92,24 +89,21 @@ export default function ScanPage({
                             <Text style={styles.scanBtnText}>SCAN BUSINESS CARD</Text>
                         </TouchableOpacity>
 
-                        {!currentEvent && (
+                        {!currentEvent ? (
                             <TouchableOpacity
                                 style={[styles.editBtn, { marginTop: 15, borderStyle: 'dashed' }]}
-                                onPress={() => {
-                                    const name = prompt("Enter Event Name (e.g. CES 2026):");
-                                    if (name) setCurrentEvent(name);
-                                }}
+                                onPress={openEventModal}
                             >
                                 <Ionicons name="calendar-outline" size={20} color={theme.textPrimary} />
                                 <Text style={[styles.editBtnText, { color: theme.textPrimary }]}>START CONFERENCE MODE</Text>
                             </TouchableOpacity>
-                        )}
+                        ) : null}
                     </View>
-                )}
+                ) : null}
 
-                {loading && <DotLoader />}
+                {!!loading ? <DotLoader /> : null}
 
-                {ocrResult && (
+                {!!ocrResult ? (
                     <View style={[styles.activeResultCard, { backgroundColor: theme.bg, borderColor: theme.border }]}>
                         <View style={styles.resultHeader}>
                             <Text style={[styles.resultTitle, { color: theme.textPrimary }]}>Last Scan Success!</Text>
@@ -131,7 +125,7 @@ export default function ScanPage({
                             </TouchableOpacity>
                         </View>
                     </View>
-                )}
+                ) : null}
             </ScrollView>
         </View>
     );

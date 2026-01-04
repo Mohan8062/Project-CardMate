@@ -102,6 +102,8 @@ export const createStyles = (theme) => StyleSheet.create({
         borderRadius: 30, // Pill shape
         borderWidth: 1,
         borderColor: theme.border,
+        alignItems: 'center',
+        justifyContent: 'center',
     },
     scanBtnText: { color: theme.bg, fontWeight: "800", fontSize: 14, letterSpacing: 1, fontFamily: 'monospace' },
 

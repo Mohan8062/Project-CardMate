@@ -9,11 +9,11 @@ import {
     KeyboardAvoidingView,
     Platform,
     Alert,
-    SafeAreaView,
     Animated,
     Dimensions,
     StatusBar,
 } from "react-native";
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import { loginUser, registerUser } from "../services/api";
@@ -98,7 +98,7 @@ export default function AuthScreen({ onLoginSuccess }) {
                                 {isLogin ? "Welcome Back" : "Create Account"}
                             </Text>
 
-                            {!isLogin && (
+                            {!isLogin ? (
                                 <View style={styles.inputWrapper}>
                                     <Text style={styles.inputLabel}>FULL NAME</Text>
                                     <View style={styles.inputGroup}>
@@ -112,7 +112,7 @@ export default function AuthScreen({ onLoginSuccess }) {
                                         />
                                     </View>
                                 </View>
-                            )}
+                            ) : null}
 
                             <View style={styles.inputWrapper}>
                                 <Text style={styles.inputLabel}>EMAIL ADDRESS</Text>
@@ -146,7 +146,7 @@ export default function AuthScreen({ onLoginSuccess }) {
                             </View>
 
                             <TouchableOpacity
-                                style={[styles.mainBtn, loading && { opacity: 0.7 }]}
+                                style={[styles.mainBtn, !!loading ? { opacity: 0.7 } : null]}
                                 onPress={handleAuth}
                                 disabled={loading}
                             >
@@ -156,7 +156,7 @@ export default function AuthScreen({ onLoginSuccess }) {
                                     start={{ x: 0, y: 0 }}
                                     end={{ x: 1, y: 1 }}
                                 >
-                                    {loading ? (
+                                    {!!loading ? (
                                         <ActivityIndicator color="#fff" />
                                     ) : (
                                         <Text style={styles.mainBtnText}>{isLogin ? "CONTINUE" : "SIGN UP"}</Text>

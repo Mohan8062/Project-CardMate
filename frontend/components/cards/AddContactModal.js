@@ -1,6 +1,6 @@
 import React from 'react';
 import { View, Text, TouchableOpacity, Modal, Alert } from 'react-native';
-import { Ionicons, MaterialCommunityIcons, FontAwesome5 } from "@expo/vector-icons";
+import { Ionicons, FontAwesome5 } from "@expo/vector-icons";
 
 export default function AddContactModal({
     theme,
@@ -35,12 +35,6 @@ export default function AddContactModal({
                         <Text style={[styles.sheetButtonText, { color: theme.textPrimary }]}>Upload from Gallery</Text>
                     </TouchableOpacity>
 
-                    <TouchableOpacity style={[styles.sheetButton, { borderBottomColor: theme.border }]} onPress={() => Alert.alert("NFC", "NFC Scan initiated...")}>
-                        <View style={styles.sheetIconBox}>
-                            <MaterialCommunityIcons name="credit-card-wireless" size={22} color={theme.textPrimary} />
-                        </View>
-                        <Text style={[styles.sheetButtonText, { color: theme.textPrimary }]}>Scan NFC tag</Text>
-                    </TouchableOpacity>
 
                     <TouchableOpacity style={[styles.sheetButton, { borderBottomWidth: 0, borderBottomColor: theme.border }]} onPress={() => Alert.alert("Manual", "Enter details manually...")}>
                         <View style={styles.sheetIconBox}>

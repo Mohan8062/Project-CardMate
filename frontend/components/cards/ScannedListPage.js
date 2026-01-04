@@ -1,8 +1,9 @@
 import React from 'react';
-import { View, Text, TouchableOpacity, ScrollView, TextInput } from 'react-native';
+import { View, Text, TouchableOpacity, ScrollView, TextInput, Dimensions, StatusBar } from 'react-native';
 import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
 import { SkeletonItem } from '../common/SkeletonItem';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
 export default function ScannedListPage({
     theme,
@@ -15,7 +16,7 @@ export default function ScannedListPage({
     filteredHistory,
     placeholderColor,
     setSelectedCard,
-    removeHistoryItem
+    removeHistoryItem,
 }) {
     const parseJSON = (str) => {
         try {
@@ -52,7 +53,7 @@ export default function ScannedListPage({
                         All Scanned Cards ({filteredHistory.length})
                     </Text>
 
-                    {loading ? (
+                    {!!loading ? (
                         <View style={{ gap: 12 }}>
                             {[1, 2, 3, 4].map(i => <SkeletonItem key={i} darkMode={darkMode} />)}
                         </View>
@@ -70,17 +71,17 @@ export default function ScannedListPage({
                                     style={[
                                         styles.historyCard,
                                         { backgroundColor: theme.card, borderColor: theme.border },
-                                        item.is_favorite && { borderColor: theme.accent, borderWidth: 1 }
+                                        !!item.is_favorite ? { borderColor: theme.accent, borderWidth: 1 } : null
                                     ]}
                                     onPress={() => setSelectedCard(item)}
                                 >
                                     <View style={[styles.historyThumb, { backgroundColor: theme.secondary, borderColor: theme.border }]}>
                                         <Ionicons name="person" size={24} color={theme.textPrimary} />
-                                        {item.is_favorite && (
+                                        {!!item.is_favorite ? (
                                             <View style={{ position: 'absolute', top: -5, right: -5 }}>
                                                 <Ionicons name="star" size={14} color={theme.accent} />
                                             </View>
-                                        )}
+                                        ) : null}
                                     </View>
                                     <View style={styles.historyBody}>
                                         <Text style={[styles.historyName, { color: theme.textPrimary }]}>{item.name}</Text>
@@ -91,13 +92,13 @@ export default function ScannedListPage({
                                             <Text style={[styles.historyDate, { color: theme.textSecondary, marginBottom: 0 }]}>
                                                 {new Date(item.created_at).toLocaleDateString()}
                                             </Text>
-                                            {item.tags && parseJSON(item.tags).length > 0 && (
+                                            {!!item.tags && parseJSON(item.tags).length > 0 ? (
                                                 <View style={{ backgroundColor: theme.primary, paddingHorizontal: 4, paddingVertical: 1, borderRadius: 2 }}>
                                                     <Text style={{ fontSize: 8, color: theme.bg, fontWeight: 'bold', fontFamily: 'monospace' }}>
                                                         {parseJSON(item.tags)[0].toUpperCase()}
                                                     </Text>
                                                 </View>
-                                            )}
+                                            ) : null}
                                         </View>
                                     </View>
                                     <TouchableOpacity
